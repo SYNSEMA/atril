@@ -18,25 +18,52 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 - [x] Agent detection by program, state from activity and terminal bell, title from OSC
 - [x] `atr` CLI: `open`, `run`, `ls`, `kill`, `rm`, `up`, `down`
 - [x] Local-only security model (see [SECURITY.md](SECURITY.md))
-- [ ] Desktop app (`synsema build --serve --no-console`) and installable PWA
+- [x] Installers: Windows (Start menu, PATH, daemon at sign-in) and Linux/macOS (systemd user service)
+- [ ] Installable PWA, `.msi`/`.dmg`, signed binaries, smaller executables
 - [ ] `atr attach` inside your current terminal
 - [ ] Other machines through an end-to-end encrypted relay (v0.2)
 - [ ] Phone: key bar is there; push when an agent needs you (v0.3)
 
-## Try it
+## Install
 
-Needs the Synsema engine (v0.6.44+): https://synsema.dev
+**Windows** (from this checkout, with the Synsema engine v0.6.44+ to build):
 
-```sh
-cli/atr up                       # starts the daemon (127.0.0.1:7171)
-cli/atr run --name review claude # a session running Claude Code
-cli/atr run                      # your shell
-cli/atr ls
-cli/atr open review              # the window, on that tab
-cli/atr kill review
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-On Windows use `cli\atr.cmd`.
+It installs `atr.exe`, `atril.exe` and `atrild.exe` in `%LOCALAPPDATA%\Atril`, puts `atr` on your
+PATH, adds **Atril** to the Start menu and starts the daemon when you sign in. No admin.
+`install.ps1 -Uninstall` removes it.
+
+**Linux / macOS / a server**:
+
+```sh
+./install.sh            # atr + atrild in ~/.local/bin; on Linux a systemd user service + linger
+```
+
+## Use
+
+```sh
+atr run --name review claude   # a session running Claude Code
+atr run                        # your shell
+atr ls                         # every session: name, pid, state
+atr open review                # the window, on that tab (or Atril from the Start menu)
+atr kill review                # end the program
+atr down                       # stop the daemon and every session
+```
+
+**On a server** there is no window: run your agents there with `atr run`, and open the window from
+your computer through SSH (the daemon only listens on the server's 127.0.0.1):
+
+```sh
+ssh -L 7172:127.0.0.1:7171 my-server
+atr url                        # on the server: the address with its key; change 7171 to 7172
+```
+
+From the source without installing: `cli/atr` (`cli\atr.cmd` on Windows) runs the same commands
+through the engine.
 
 ## How it works
 

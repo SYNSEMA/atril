@@ -1,3 +1,4 @@
 .synsema/
 *.log
 node_modules/
+dist/

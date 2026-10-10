@@ -1,6 +1,7 @@
--- atr.syn — the Atril command line. It talks to the daemon of this machine (daemon/atrild.syn) and
--- starts it when it is not running. Run through the launcher next to it (atr.cmd / atr), which says
--- where Atril lives in ATRIL_HOME.
+-- atr.syn — the Atril command line. It talks to the daemon of this machine and starts it when it is
+-- not running. Installed, it is atr.exe (and atril.exe, the same without a console, for the Start
+-- menu) next to atrild.exe. From the source, the launchers cli/atr.cmd and cli/atr set ATRIL_HOME
+-- and the daemon runs as `synsema serve daemon/atrild.syn`.
 --
 --   atr open [session]             the window (starts the daemon if needed); with a session, on that tab
 --   atr run [--name N] [--cwd D] [--open] [cmd args…]
@@ -8,6 +9,8 @@
 --   atr ls [--json]                the sessions of this machine
 --   atr kill <session>             end the program of a session (id, name or pid)
 --   atr rm <session>               forget a session that already ended
+--   atr url [session]              the address of the window with its key (for a browser elsewhere,
+--                                  through `ssh -L 7172:127.0.0.1:7171 <server>`: change the port)
 --   atr up | atr down              start the daemon | stop it (and every session with it)
 
 require net("127.0.0.1:7171")
@@ -15,6 +18,8 @@ require file.read("~/.atril/*")
 require env("ATRIL_HOME")
 require env("USERPROFILE")
 require env("HOME")
+require env("DISPLAY")
+require env("WAYLAND_DISPLAY")
 require stdout
 require time
 require exec("powershell")
@@ -24,6 +29,7 @@ require exec("xdg-open")
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
+let VERSION be "0.1.0"
 
 task say(t)
     print(t)
@@ -56,16 +62,22 @@ task up()
     when alive()
         give conf()
     let home be env("ATRIL_HOME", "")
-    when home == ""
-        fail("ATRIL_HOME is not set: run atr through its launcher (atr.cmd or atr)")
-    let dir be home + "/daemon"
     let exe be self_path()
+    -- from the source: the engine serves daemon/atrild.syn; installed: atrild next to this binary
+    let dir be home + "/daemon"
+    let cmd be exe
+    let cmd_args be ["serve", "atrild.syn"]
+    when home == ""
+        set dir to regex_replace(replace(exe, "\\", "/"), "/[^/]*$", "")
+        set cmd to dir + (when WIN then "/atrild.exe" otherwise "/atrild")
+        set cmd_args to []
     when WIN
         -- no -Redirect*: with it the daemon inherits this pipe and `run` would wait for it forever
         let q be (t) => "'" + replace(t, "'", "''") + "'"
-        run("powershell", ["-NoProfile", "-Command", "Start-Process -WindowStyle Hidden -FilePath " + q(exe) + " -ArgumentList 'serve','atrild.syn' -WorkingDirectory " + q(dir)])
+        let al be when length(cmd_args) == 0 then "" otherwise " -ArgumentList " + join(apply(cmd_args, q), ",")
+        run("powershell", ["-NoProfile", "-Command", "Start-Process -WindowStyle Hidden -FilePath " + q(cmd) + al + " -WorkingDirectory " + q(dir)])
     otherwise
-        run("sh", ["-c", "mkdir -p \"$HOME/.atril\" && cd \"$1\" && nohup \"$2\" serve atrild.syn >\"$HOME/.atril/daemon.log\" 2>&1 &", "sh", dir, exe])
+        run("sh", ["-c", "mkdir -p \"$HOME/.atril\" && cd \"$1\" && shift && nohup \"$@\" >\"$HOME/.atril/daemon.log\" 2>&1 &", "sh", dir, cmd] + cmd_args)
     let tries be 0
     while not alive() and tries < 40
         sleep(0.25)
@@ -88,9 +100,17 @@ task api(method, path, body)
         fail(when j != nothing then text(get(j, "error", body of r)) otherwise body of r)
     give json of r
 
-task open_window(ref)
+task url_of(ref)
     let c be up()
-    let url be BASE + "/#t=" + c["token"] + (when ref == nothing then "" otherwise "&s=" + ref)
+    give BASE + "/#t=" + c["token"] + (when ref == nothing then "" otherwise "&s=" + ref)
+
+task open_window(ref)
+    let url be url_of(ref)
+    when not WIN and platform()["os"] != "macos" and env("DISPLAY", "") == "" and env("WAYLAND_DISPLAY", "") == ""
+        say("no screen here. From your computer:")
+        say("  ssh -L 7172:127.0.0.1:7171 <this server>")
+        say("  then open " + replace(url, ":7171/", ":7172/"))
+        give nothing
     when WIN
         try
             run("powershell", ["-NoProfile", "-Command", "Start-Process msedge -ArgumentList '--app=" + url + "'"])
@@ -183,6 +203,10 @@ otherwise when cmd == "rm"
         fail("atr rm <session>")
     api("DELETE", "/api/sessions/" + rest[0], nothing)
     say("removed " + rest[0])
+otherwise when cmd == "url"
+    say(url_of(when length(rest) > 0 then rest[0] otherwise nothing))
+otherwise when cmd == "version" or cmd == "--version"
+    say("atril " + VERSION)
 otherwise when cmd == "up"
     let c be up()
     say("atril is running on " + BASE + " (" + c["machine"] + ")")
@@ -194,4 +218,4 @@ otherwise when cmd == "down"
             set e to e
     say("atril stopped")
 otherwise
-    say("atr open [session] | run [--name N] [--cwd D] [--open] [cmd args…] | ls [--json] | kill <s> | rm <s> | up | down")
+    say("atr open [session] | url [session] | run [--name N] [--cwd D] [--open] [cmd args…] | ls [--json] | kill <s> | rm <s> | up | down")

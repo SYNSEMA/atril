@@ -14,8 +14,9 @@
 --   - it listens on 127.0.0.1 only: from another computer there is no port to find
 --   - every route but the static UI needs the token written at start to ~/.atril/daemon.json
 --     (Authorization: Bearer, or the HttpOnly SameSite=Strict cookie the UI gets at /api/login)
---   - Host must be 127.0.0.1/localhost:<port> (DNS rebinding) and Origin, when sent, this same
---     origin (a web page you visit cannot open a socket to your terminals)
+--   - Host must be 127.0.0.1 or localhost (DNS rebinding) on any port, so an SSH tunnel
+--     (`ssh -L 7172:127.0.0.1:7171 vps`) works; Origin, when sent, must be exactly that host and
+--     port (a web page you visit cannot open a socket to your terminals)
 
 require serve(7171)
 require exec
@@ -32,8 +33,6 @@ require file.write("~/.atril/*")
 let PORT be 7171
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
-let ORIGINS be ["http://127.0.0.1:" + text(PORT), "http://localhost:" + text(PORT)]
-let HOSTS be ["127.0.0.1:" + text(PORT), "localhost:" + text(PORT)]
 let MACHINE be env("COMPUTERNAME", env("HOSTNAME", "this computer"))
 let HOME be env("USERPROFILE", env("HOME", "."))
 
@@ -155,16 +154,21 @@ task find_session(ref)
             give s
     give nothing
 
+-- cookies are per host, not per port: a tunnel to another machine on 127.0.0.1:7172 keeps its own
+task cookie_name(host)
+    give "atril_" + regex_replace(host, "^.*:", "")
+
 -- who may talk to the daemon: same machine, same origin, the token
 task check(tok, request)
     let h be request.headers
-    when get(h, "host") not in HOSTS
+    let host be text(get(h, "host", ""))
+    when not regex_find_all(host, "^(127\\.0\\.0\\.1|localhost)(:[0-9]+)?$")
         give nothing
-    when get(h, "origin") != nothing and get(h, "origin") not in ORIGINS
+    when get(h, "origin") != nothing and get(h, "origin") != "http://" + host
         give nothing
     let given be tok
     when given == nothing or given == ""
-        set given to get(request.cookies, "atril")
+        set given to get(request.cookies, cookie_name(host))
     when given == nothing or not constant_time_eq(given, TOKEN)
         give nothing
     give {"name": "owner"}
@@ -180,7 +184,7 @@ serve on 7171
         give respond(LOGIN_PAGE, "text/html")
 
     route "POST /api/login" requires auth
-        give set_cookie({"ok": true, "machine": MACHINE}, "atril", TOKEN, {"secure": false, "same_site": "Strict", "http_only": true})
+        give set_cookie({"ok": true, "machine": MACHINE}, cookie_name(text(get(request.headers, "host", ""))), TOKEN, {"secure": false, "same_site": "Strict", "http_only": true})
 
     -- `atr down`: every session ends with the daemon
     route "POST /api/shutdown" requires auth
