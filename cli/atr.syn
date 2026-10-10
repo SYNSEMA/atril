@@ -3,7 +3,8 @@
 -- menu) next to atrild.exe. From the source, the launchers cli/atr.cmd and cli/atr set ATRIL_HOME
 -- and the daemon runs as `synsema serve daemon/atrild.syn`.
 --
---   atr open [session]             the window (starts the daemon if needed); with a session, on that tab
+--   atr open [session] [--new]     the window (starts the daemon if needed); with a session, on that tab.
+--                                  A window already open shows it instead, unless --new
 --   atr run [--name N] [--cwd D] [--open] [cmd args…]
 --                                  a new session (your shell without cmd); it outlives every window
 --   atr ls [--json]                the sessions of this machine
@@ -104,7 +105,18 @@ task url_of(ref)
     let c be up()
     give BASE + "/#t=" + c["token"] + (when ref == nothing then "" otherwise "&s=" + ref)
 
-task open_window(ref)
+-- a window is already open: it shows the session itself, and no second window appears
+task show_in_open_window(ref)
+    try
+        let r be api("POST", "/api/show", {"ref": ref})
+        give r["shown"]
+    recover e
+        give false
+
+task open_window(ref, fresh)
+    when not fresh and show_in_open_window(ref)
+        say("Atril ya estaba abierto: " + (when ref == nothing then "está en esa ventana" otherwise "abrí " + ref + " ahí") + ". (atr open --new abre otra ventana)")
+        give nothing
     let url be url_of(ref)
     when not WIN and platform()["os"] != "macos" and env("DISPLAY", "") == "" and env("WAYLAND_DISPLAY", "") == ""
         say("no screen here. From your computer:")
@@ -181,14 +193,15 @@ task new_session(rest)
     let s be api("POST", "/api/sessions", body)
     say(s["id"] + "  " + s["name"] + "  pid " + text(s["pid"]))
     when open
-        open_window(s["id"])
+        open_window(s["id"], false)
 
 let a be args()
 let cmd be when length(a) == 0 then "open" otherwise a[0]
 let rest be when length(a) > 1 then slice(a, 1) otherwise []
 
 when cmd == "open"
-    open_window(when length(rest) > 0 then rest[0] otherwise nothing)
+    let refs be where(rest, (x) => not starts_with(x, "--"))
+    open_window(when length(refs) > 0 then refs[0] otherwise nothing, contains(rest, "--new"))
 otherwise when cmd == "run" or cmd == "new"
     new_session(rest)
 otherwise when cmd == "ls" or cmd == "list"

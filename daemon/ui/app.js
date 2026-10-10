@@ -45,6 +45,13 @@ function statusOf(s) {
   return s.activity || "idle";
 }
 const LABEL = { working: "trabajando", idle: "esperando", bell: "te necesita", exited: "terminó" };
+// quiet means different things: an agent is waiting for you, a shell is just there
+function label(s) {
+  const st = statusOf(s);
+  if (st === "idle" && s.kind === "shell") return "inactiva";
+  if (st === "idle") return "esperándote";
+  return LABEL[st];
+}
 
 function ago(ts) {
   const d = Math.max(0, Date.now() / 1000 - ts);
@@ -83,13 +90,13 @@ function sessionItem(s) {
   const li = document.createElement("li");
   const st = statusOf(s);
   li.className = tabs.has(s.id) ? "open" : "";
-  li.title = `${s.cmd} ${(s.args || []).join(" ")}\npid ${s.pid} · ${s.id} · ${LABEL[st]}`;
+  li.title = `${s.cmd} ${(s.args || []).join(" ")}\npid ${s.pid} · ${s.id} · ${label(s)}`;
   li.innerHTML = `<span class="st ${st}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
   li.querySelector(".name").textContent = s.name;
   li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
   // a title that is only the program's path says nothing: show the state instead
   const title = s.title && !/[\\/].*\.(exe|cmd)$/i.test(s.title) && s.title !== s.cmd ? s.title : null;
-  li.querySelector(".sub").textContent = title || `${LABEL[st]} · pid ${s.pid}`;
+  li.querySelector(".sub").textContent = title && s.status === "running" ? title : `${label(s)} · pid ${s.pid}`;
   li.onclick = () => { openTab(s.id); $("#side").classList.remove("show"); };
   li.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.id, e.clientX, e.clientY); };
   let press;
@@ -102,6 +109,7 @@ function events() {
   const ws = new WebSocket(WS + "/api/events");
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
+    if (m.t === "show") { show(m.ref); return; }
     if (m.t === "all") { sessions.clear(); for (const s of m.sessions) sessions.set(s.id, s); }
     else if (m.session.status === "removed") sessions.delete(m.session.id);
     else sessions.set(m.session.id, m.session);
@@ -110,6 +118,14 @@ function events() {
   ws.onclose = () => setTimeout(events, 1500);
 }
 setInterval(renderSide, 30000);   // keep the "ago" column honest
+
+// `atr open [session]` while this window is open: show it here
+function show(ref) {
+  window.focus();
+  if (!ref) return;
+  const s = [...sessions.values()].reverse().find((x) => [x.id, x.name, String(x.pid)].includes(ref));
+  if (s) openTab(s.id);
+}
 
 // ---- tabs
 function renderTabs() {
@@ -148,10 +164,18 @@ function openTab(id) {
   tabs.set(id, t);
   connect(id, t);
   term.onData((d) => {
+    if (t.ended) return;
     if (t.ctrl && d.length === 1) { d = String.fromCharCode(d.toUpperCase().charCodeAt(0) & 31); setCtrl(t, false); }
     send(t, { t: "i", d });
   });
   term.onResize(({ cols, rows }) => send(t, { t: "r", cols, rows }));
+  // only a key you pressed (onData also carries the terminal's own answers to queries)
+  term.onKey(() => {
+    if (t.ended && !t.warned) {
+      t.warned = true;
+      t.term.write("\r\n\x1b[33mEste programa ya terminó: lo que escribas no llega a ningún lado. Usá «Reiniciar».\x1b[0m\r\n");
+    }
+  });
   focusTab(id);
 }
 
@@ -163,10 +187,17 @@ function connect(id, t) {
     const m = JSON.parse(e.data);
     if (m.t === "o") t.term.write(m.d);
     else if (m.t === "exit") {
+      if (t.ended) return;
+      t.ended = true;
+      const s = sessions.get(id) || {};
+      t.term.write(`\r\n\x1b[2m── ${s.name || id} terminó (código ${m.code ?? "?"}) ──\x1b[0m\r\n`);
       const end = document.createElement("div");
       end.className = "ended";
-      end.textContent = `terminó · código ${m.code ?? "?"}`;
+      end.innerHTML = `<span></span><button>Reiniciar</button>`;
+      end.firstChild.textContent = `terminó · código ${m.code ?? "?"}`;
+      end.lastChild.onclick = () => restart(id);
       t.el.append(end);
+      renderSide();
     } else if (m.t === "error") closeTab(id);   // a tab remembered from a session that is gone
   };
   ws.onclose = () => {
@@ -195,6 +226,16 @@ function closeTab(id) {
   tabs.delete(id);
   if (active === id) active = [...tabs.keys()].pop() || null;
   if (active) focusTab(active); else renderSide();
+}
+
+// the same program again, in the same folder and with the same name
+async function restart(id) {
+  const s = sessions.get(id);
+  if (!s) return;
+  closeTab(id);
+  await api("DELETE", `/api/sessions/${id}`);
+  sessions.delete(id);
+  await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name });
 }
 
 async function newTab(body = {}) {
@@ -256,6 +297,7 @@ function showCtx(id, x, y) {
   const s = sessions.get(id);
   m.querySelector('[data-a="kill"]').hidden = s.status !== "running";
   m.querySelector('[data-a="remove"]').hidden = s.status === "running";
+  m.querySelector('[data-a="restart"]').hidden = s.status === "running";
 }
 document.addEventListener("click", (e) => { if (!e.target.closest("#ctx")) $("#ctx").hidden = true; });
 $("#ctx").onclick = async (e) => {
@@ -265,6 +307,7 @@ $("#ctx").onclick = async (e) => {
   const s = sessions.get(ctxId);
   if (a === "open") openTab(ctxId);
   if (a === "kill" && confirm(`¿Matar ${s.name} (pid ${s.pid})? El programa se cierra.`)) await api("POST", `/api/sessions/${ctxId}/kill`);
+  if (a === "restart") await restart(ctxId);
   if (a === "remove") { closeTab(ctxId); await api("DELETE", `/api/sessions/${ctxId}`); }
 };
 
@@ -274,6 +317,7 @@ function shortcuts(e) {
   if (e.ctrlKey && e.shiftKey && e.code === "KeyK") { openPalette(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { newTab(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (active) closeTab(active); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
   if (e.ctrlKey && e.code === "Tab") {
     const ids = [...tabs.keys()];
     if (ids.length) focusTab(ids[(ids.indexOf(active) + (e.shiftKey ? -1 : 1) + ids.length) % ids.length]);
@@ -295,7 +339,15 @@ $("#keys").onclick = (e) => {
 
 $("#new").onclick = $("#plus").onclick = () => newTab();
 $("#find").onclick = openPalette;
-$("#collapse").onclick = () => { $("#side").classList.add("collapsed"); requestAnimationFrame(() => { const t = tabs.get(active); if (t) t.fit.fit(); }); };
+function setSide(open) {
+  $("#side").classList.toggle("collapsed", !open);
+  $("#expand").hidden = open;
+  store.set("side", open);
+  requestAnimationFrame(() => { const t = tabs.get(active); if (t) t.fit.fit(); });
+}
+$("#collapse").onclick = () => setSide(false);
+$("#expand").onclick = () => setSide(true);
+setSide(store.get("side", true));
 $("#menu").onclick = () => $("#side").classList.toggle("show");
 $("#stage").onclick = () => $("#side").classList.remove("show");
 

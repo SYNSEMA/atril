@@ -53,6 +53,14 @@ task kind_of(cmd)
             give k
     give "shell"
 
+-- an agent started inside a shell names itself in the title ("✳ Claude Code"): then the session is that agent
+task kind_from_title(title)
+    let t be lower(text(title))
+    each pair in [["claude code", "claude"], ["codex", "codex"], ["opencode", "opencode"], ["gemini", "gemini"], ["aider", "aider"], ["goose", "goose"]]
+        when contains(t, pair[0])
+            give pair[1]
+    give nothing
+
 -- the last terminal title in a chunk of output (OSC 0 or 2), or nothing
 task title_in(chunk)
     let found be regex_find_all(chunk, "\u001b\\][02];[^\u0007\u001b]*(\u0007|\u001b\\\\)")
@@ -90,6 +98,8 @@ agent Session
                 set meta["status"] to "exited"
                 set meta["activity"] to "idle"
                 set meta["exit_code"] to ev["data"]["exit_code"]
+                set meta["ended"] to now()
+                state_set("tail:" + sid, slice(buf, -65536))
                 publish_meta(meta)
                 bus_publish("out." + sid, {"t": "exit", "code": ev["data"]["exit_code"]})
                 stop
@@ -105,6 +115,8 @@ agent Session
             let t be title_in(chunk)
             when t != nothing and t != meta["title"]
                 set meta["title"] to t
+                let k be kind_from_title(t)
+                set meta["kind"] to (when k != nothing then k otherwise kind_of(cmd))
                 set changed to true
             -- a bell outside a title: the program asks for attention
             when not meta["bell"] and contains(regex_replace(chunk, "\u001b\\][^\u0007]*\u0007", ""), "\u0007")
@@ -148,11 +160,14 @@ task sessions()
     give sort_by(out, (s) => s["started"])
 
 -- a session by id, name or pid
+-- several with one name (a session restarted): the running one, else the newest
 task find_session(ref)
+    let found be nothing
     each s in sessions()
         when s["id"] == ref or s["name"] == ref or text(s["pid"]) == ref
-            give s
-    give nothing
+            when found == nothing or s["status"] == "running" or found["status"] != "running"
+                set found to s
+    give found
 
 -- cookies are per host, not per port: a tunnel to another machine on 127.0.0.1:7172 keeps its own
 task cookie_name(host)
@@ -190,6 +205,12 @@ serve on 7171
     route "POST /api/shutdown" requires auth
         shutdown("atr down")
         give {"ok": true}
+
+    -- `atr open` with a window already open: show it there instead of opening another one
+    route "POST /api/show" requires auth
+        let b be json of request
+        let ref be when b == nothing then nothing otherwise get(b, "ref")
+        give {"shown": bus_publish("ui", {"ref": ref}) > 0}
 
     route "GET /api/info" requires auth
         give {"machine": MACHINE, "os": platform()["os"], "version": "0.1.0"}
@@ -241,6 +262,7 @@ serve on 7171
         when s["status"] == "running"
             give bad_request("session " + s["id"] + " is still running: kill it first")
         state_delete("sess:" + s["id"])
+        state_delete("tail:" + s["id"])
         bus_publish("sessions", {"id": s["id"], "status": "removed"})
         give {"ok": true}
 
@@ -248,13 +270,15 @@ serve on 7171
     route "GET /api/events" requires auth
         timeout none
         socket
-            let sub be bus_subscribe("sessions")
+            let sub be bus_subscribe(["sessions", "ui"])
             ws_send(socket, json_encode({"t": "all", "sessions": sessions()}))
             while true
                 let ev be select({"ui": socket, "bus": sub}, 30)
                 when ev != nothing and ev["name"] == "ui"
                     when ev["type"] == "close"
                         stop
+                otherwise when ev != nothing and ev["topic"] == "ui"
+                    ws_send(socket, json_encode({"t": "show", "ref": ev["data"]["ref"]}))
                 otherwise when ev != nothing
                     ws_send(socket, json_encode({"t": "one", "session": ev["data"]}))
 
@@ -271,6 +295,7 @@ serve on 7171
             let me be token(16)
             let base be -1
             when s["status"] != "running"
+                ws_send(socket, json_encode({"t": "o", "d": state_get("tail:" + sid, "")}))
                 ws_send(socket, json_encode({"t": "exit", "code": s["exit_code"]}))
             otherwise
                 bus_publish("in." + sid, {"t": "snap", "to": me})
