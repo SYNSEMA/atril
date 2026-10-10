@@ -1,0 +1,3 @@
+.synsema/
+*.log
+node_modules/

@@ -1,0 +1,294 @@
+-- atrild.syn — the Atril daemon: owns the terminals of this machine.
+--
+-- Every session is a Synsema agent that owns one pseudo-terminal. A window that attaches only
+-- subscribes to the session's output on the bus and publishes keys to it, so closing the window
+-- detaches: the program keeps running until it exits by itself, someone presses Ctrl-C inside it,
+-- or someone kills it on purpose (`atr kill`, or the menu of the sidebar).
+--
+--   bus  in.<id>    what reaches a session: {t: "i", d: keys} | {t: "r", cols, rows} | {t: "snap", to} | {t: "kill"}
+--   bus  out.<id>   what a session says:    {t: "o", s: seq, d: text} | {t: "snap", s, d, to} | {t: "exit", code}
+--   bus  sessions   the metadata of a session changed (the sidebar listens)
+--   state sess:<id> the metadata of each session, for listing
+--
+-- Security (v0.1, one machine):
+--   - it listens on 127.0.0.1 only: from another computer there is no port to find
+--   - every route but the static UI needs the token written at start to ~/.atril/daemon.json
+--     (Authorization: Bearer, or the HttpOnly SameSite=Strict cookie the UI gets at /api/login)
+--   - Host must be 127.0.0.1/localhost:<port> (DNS rebinding) and Origin, when sent, this same
+--     origin (a web page you visit cannot open a socket to your terminals)
+
+require serve(7171)
+require exec
+require time
+require random
+require stdout
+require env("COMPUTERNAME")
+require env("HOSTNAME")
+require env("SHELL")
+require env("USERPROFILE")
+require env("HOME")
+require file.write("~/.atril/*")
+
+let PORT be 7171
+let TOKEN be token(32)
+let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
+let ORIGINS be ["http://127.0.0.1:" + text(PORT), "http://localhost:" + text(PORT)]
+let HOSTS be ["127.0.0.1:" + text(PORT), "localhost:" + text(PORT)]
+let MACHINE be env("COMPUTERNAME", env("HOSTNAME", "this computer"))
+let HOME be env("USERPROFILE", env("HOME", "."))
+
+write_file("~/.atril/daemon.json", json_encode({"port": PORT, "token": TOKEN, "machine": MACHINE}))
+
+-- the shell a new tab opens when nothing else is asked for
+task default_shell()
+    when platform()["os"] == "windows"
+        give {"cmd": "powershell", "args": ["-NoLogo"]}
+    give {"cmd": env("SHELL", "bash"), "args": ["-l"]}
+
+-- what runs in it, from the program's name: the sidebar groups and marks agents by it
+task kind_of(cmd)
+    let file be lower(regex_replace(cmd, "^.*[\\\\/]", ""))
+    let base be regex_replace(file, "\\.(exe|cmd|bat|ps1)$", "")
+    each k in ["claude", "codex", "opencode", "gemini", "aider", "goose", "amp", "cursor-agent", "ollama"]
+        when base == k
+            give k
+    give "shell"
+
+-- the last terminal title in a chunk of output (OSC 0 or 2), or nothing
+task title_in(chunk)
+    let found be regex_find_all(chunk, "\u001b\\][02];[^\u0007\u001b]*(\u0007|\u001b\\\\)")
+    when length(found) == 0
+        give nothing
+    let last be found[length(found) - 1]
+    give regex_replace(regex_replace(last, "^\u001b\\][02];", ""), "(\u0007|\u001b\\\\)$", "")
+
+task publish_meta(meta)
+    state_set("sess:" + meta["id"], meta)
+    bus_publish("sessions", meta)
+
+-- one session: one pseudo-terminal, kept alive whoever is watching
+agent Session
+    require exec
+    require time
+    let p be proc_spawn(cmd, args, {"pty": true, "cols": cols, "rows": rows, "cwd": cwd})
+    let inbox be bus_subscribe("in." + sid)
+    let meta be {"id": sid, "name": name, "cmd": cmd, "args": args, "cwd": cwd, "kind": kind_of(cmd),
+        "pid": proc_stats(p)["pid"], "machine": MACHINE, "started": now(), "status": "running",
+        "activity": "working", "title": nothing, "exit_code": nothing, "bell": false}
+    publish_meta(meta)
+    let seq be 0
+    let buf be ""
+    let last_out be now()
+    while true
+        let ev be select({"p": p, "in": inbox}, 1)
+        when ev == nothing
+            -- quiet for 3 s: an agent waiting for you, or a shell at its prompt
+            when meta["activity"] == "working" and now() - last_out > 3
+                set meta["activity"] to "idle"
+                publish_meta(meta)
+        otherwise when ev["name"] == "p"
+            when ev["type"] == "exit"
+                set meta["status"] to "exited"
+                set meta["activity"] to "idle"
+                set meta["exit_code"] to ev["data"]["exit_code"]
+                publish_meta(meta)
+                bus_publish("out." + sid, {"t": "exit", "code": ev["data"]["exit_code"]})
+                stop
+            let chunk be ev["data"]
+            set seq to seq + 1
+            set buf to buf + chunk
+            when length(buf) > KEEP * 2
+                set buf to slice(buf, length(buf) - KEEP)
+            set last_out to now()
+            bus_publish("out." + sid, {"t": "o", "s": seq, "d": chunk})
+            let changed be meta["activity"] != "working"
+            set meta["activity"] to "working"
+            let t be title_in(chunk)
+            when t != nothing and t != meta["title"]
+                set meta["title"] to t
+                set changed to true
+            -- a bell outside a title: the program asks for attention
+            when not meta["bell"] and contains(regex_replace(chunk, "\u001b\\][^\u0007]*\u0007", ""), "\u0007")
+                set meta["bell"] to true
+                set changed to true
+            when changed
+                publish_meta(meta)
+        otherwise
+            let m be ev["data"]
+            when m["t"] == "i"
+                proc_send(p, m["d"])
+                when meta["bell"]
+                    set meta["bell"] to false
+                    publish_meta(meta)
+            otherwise when m["t"] == "r"
+                proc_resize(p, m["cols"], m["rows"])
+            otherwise when m["t"] == "snap"
+                bus_publish("out." + sid, {"t": "snap", "s": seq, "d": buf, "to": m["to"]})
+            otherwise when m["t"] == "kill"
+                proc_kill(p)
+
+-- what a window may send to a session, and nothing else: keys, or a new size
+task clean_input(m)
+    when type_of(m) != "map"
+        give nothing
+    when get(m, "t") == "i" and type_of(get(m, "d")) == "text"
+        give {"t": "i", "d": m["d"]}
+    when get(m, "t") == "r"
+        let c be int(get(m, "cols"), fallback = 0)
+        let r be int(get(m, "rows"), fallback = 0)
+        when c >= 2 and c <= 1000 and r >= 2 and r <= 500
+            give {"t": "r", "cols": c, "rows": r}
+    give nothing
+
+task sessions()
+    let all be state_all()
+    let out be []
+    each k in keys(all)
+        when starts_with(k, "sess:")
+            set out to out + [all[k]]
+    give sort_by(out, (s) => s["started"])
+
+-- a session by id, name or pid
+task find_session(ref)
+    each s in sessions()
+        when s["id"] == ref or s["name"] == ref or text(s["pid"]) == ref
+            give s
+    give nothing
+
+-- who may talk to the daemon: same machine, same origin, the token
+task check(tok, request)
+    let h be request.headers
+    when get(h, "host") not in HOSTS
+        give nothing
+    when get(h, "origin") != nothing and get(h, "origin") not in ORIGINS
+        give nothing
+    let given be tok
+    when given == nothing or given == ""
+        set given to get(request.cookies, "atril")
+    when given == nothing or not constant_time_eq(given, TOKEN)
+        give nothing
+    give {"name": "owner"}
+
+let LOGIN_PAGE be "<!doctype html><meta charset=utf-8><title>Atril</title><body style='background:#0c0c0d;color:#9a9aa2;font:14px ui-monospace,monospace;padding:40px'>Open Atril with <b style='color:#e6e6ea'>atr open</b> — it brings the key of this computer.</body>"
+
+serve on 7171
+    bind "127.0.0.1"
+    auth with check
+    static "./ui"
+
+    route "GET /api/hello"
+        give respond(LOGIN_PAGE, "text/html")
+
+    route "POST /api/login" requires auth
+        give set_cookie({"ok": true, "machine": MACHINE}, "atril", TOKEN, {"secure": false, "same_site": "Strict", "http_only": true})
+
+    -- `atr down`: every session ends with the daemon
+    route "POST /api/shutdown" requires auth
+        shutdown("atr down")
+        give {"ok": true}
+
+    route "GET /api/info" requires auth
+        give {"machine": MACHINE, "os": platform()["os"], "version": "0.1.0"}
+
+    route "GET /api/sessions" requires auth
+        give sessions()
+
+    route "POST /api/sessions" requires auth
+        let b be json of request
+        when b == nothing
+            set b to {}
+        let sh be default_shell()
+        let cmd be get(b, "cmd")
+        let args be get(b, "args")
+        when cmd == nothing or cmd == ""
+            set cmd to sh["cmd"]
+            set args to sh["args"]
+        when args == nothing
+            set args to []
+        let n be state_incr("next_id")
+        let sid be "s" + text(n)
+        let nm be get(b, "name")
+        when nm == nothing or nm == ""
+            set nm to kind_of(cmd) + "-" + text(n)
+        let cwd be get(b, "cwd")
+        when cwd == nothing or cwd == ""
+            set cwd to HOME
+        let cols be int(get(b, "cols"), fallback = 120)
+        let rows be int(get(b, "rows"), fallback = 32)
+        spawn Session with sid = sid, name = nm, cmd = cmd, args = args, cwd = cwd, cols = cols, rows = rows
+        -- wait until the agent published itself, so the answer carries the pid
+        let tries be 0
+        while state_get("sess:" + sid) == nothing and tries < 50
+            sleep(0.05)
+            set tries to tries + 1
+        give state_get("sess:" + sid, {"id": sid, "name": nm, "status": "starting"})
+
+    route "POST /api/sessions/:ref/kill" requires auth
+        let s be find_session(params.ref)
+        when s == nothing
+            give not_found("no session " + params.ref)
+        bus_publish("in." + s["id"], {"t": "kill"})
+        give {"ok": true, "id": s["id"]}
+
+    route "DELETE /api/sessions/:ref" requires auth
+        let s be find_session(params.ref)
+        when s == nothing
+            give not_found("no session " + params.ref)
+        when s["status"] == "running"
+            give bad_request("session " + s["id"] + " is still running: kill it first")
+        state_delete("sess:" + s["id"])
+        bus_publish("sessions", {"id": s["id"], "status": "removed"})
+        give {"ok": true}
+
+    -- the sidebar: every change of every session
+    route "GET /api/events" requires auth
+        timeout none
+        socket
+            let sub be bus_subscribe("sessions")
+            ws_send(socket, json_encode({"t": "all", "sessions": sessions()}))
+            while true
+                let ev be select({"ui": socket, "bus": sub}, 30)
+                when ev != nothing and ev["name"] == "ui"
+                    when ev["type"] == "close"
+                        stop
+                otherwise when ev != nothing
+                    ws_send(socket, json_encode({"t": "one", "session": ev["data"]}))
+
+    -- a window on one session; closing it detaches, never kills
+    route "GET /api/sessions/:ref/attach" requires auth
+        timeout none
+        socket
+            let s be find_session(params.ref)
+            when s == nothing
+                ws_send(socket, json_encode({"t": "error", "error": "no session " + params.ref}))
+                stop
+            let sid be s["id"]
+            let out be bus_subscribe("out." + sid, {"max_queue": 8192, "on_full": "drop_oldest"})
+            let me be token(16)
+            let base be -1
+            when s["status"] != "running"
+                ws_send(socket, json_encode({"t": "exit", "code": s["exit_code"]}))
+            otherwise
+                bus_publish("in." + sid, {"t": "snap", "to": me})
+            while true
+                let ev be select({"ui": socket, "out": out}, 30)
+                when ev != nothing and ev["name"] == "ui"
+                    when ev["type"] == "close"
+                        stop
+                    let m be clean_input(json_decode(ev["data"], nothing))
+                    when m != nothing
+                        bus_publish("in." + sid, m)
+                otherwise when ev != nothing
+                    let m be ev["data"]
+                    when m["t"] == "snap"
+                        when m["to"] == me
+                            set base to m["s"]
+                            ws_send(socket, json_encode({"t": "o", "d": m["d"]}))
+                    otherwise when m["t"] == "o"
+                        -- before the snapshot, output is already inside it
+                        when base >= 0 and m["s"] > base
+                            ws_send(socket, json_encode({"t": "o", "d": m["d"]}))
+                    otherwise when m["t"] == "exit"
+                        ws_send(socket, json_encode(m))
+
+print("atril: listening on http://127.0.0.1:" + text(PORT) + " — key in ~/.atril/daemon.json")

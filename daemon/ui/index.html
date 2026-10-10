@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0c0c0d">
+<title>Atril</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
+
+    <div class="label">spaces</div>
+    <ul id="spaces"></ul>
+
+    <div class="row">
+      <button id="new" class="link" title="Nueva terminal (Ctrl+Shift+T)">new</button>
+      <button id="find" class="link" title="Buscar sesión (Ctrl+K)">find</button>
+    </div>
+
+    <div class="label">agents <span id="count" class="muted"></span></div>
+    <ul id="agents"></ul>
+
+    <button id="collapse" class="link small" title="Ocultar panel">«</button>
+  </aside>
+
+  <main id="main">
+    <nav id="tabs"><div id="tablist"></div><button id="plus" title="Nueva terminal">+</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <section id="stage">
+      <div id="empty">
+        <p>Ninguna terminal abierta.</p>
+        <p class="muted">Abrí una con <kbd>+</kbd>, o elegí una sesión viva de la izquierda.<br>Cerrar una pestaña no mata el programa: sigue corriendo y la retomás cuando quieras.</p>
+      </div>
+    </section>
+    <div id="keys" class="only-touch">
+      <button data-k="esc">Esc</button><button data-k="tab">Tab</button><button data-k="ctrl" class="mod">Ctrl</button>
+      <button data-k="up">↑</button><button data-k="down">↓</button><button data-k="left">←</button><button data-k="right">→</button>
+      <button data-k="ctrlc">^C</button>
+    </div>
+  </main>
+</div>
+
+<div id="palette" hidden>
+  <div class="box">
+    <input id="q" placeholder="nombre, comando, pid o id…" autocomplete="off" spellcheck="false">
+    <ul id="results"></ul>
+  </div>
+</div>
+
+<div id="ctx" hidden>
+  <button data-a="open">Abrir</button>
+  <button data-a="kill" class="danger">Matar proceso</button>
+  <button data-a="remove">Quitar de la lista</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

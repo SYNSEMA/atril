@@ -1,0 +1,197 @@
+-- atr.syn — the Atril command line. It talks to the daemon of this machine (daemon/atrild.syn) and
+-- starts it when it is not running. Run through the launcher next to it (atr.cmd / atr), which says
+-- where Atril lives in ATRIL_HOME.
+--
+--   atr open [session]             the window (starts the daemon if needed); with a session, on that tab
+--   atr run [--name N] [--cwd D] [--open] [cmd args…]
+--                                  a new session (your shell without cmd); it outlives every window
+--   atr ls [--json]                the sessions of this machine
+--   atr kill <session>             end the program of a session (id, name or pid)
+--   atr rm <session>               forget a session that already ended
+--   atr up | atr down              start the daemon | stop it (and every session with it)
+
+require net("127.0.0.1:7171")
+require file.read("~/.atril/*")
+require env("ATRIL_HOME")
+require env("USERPROFILE")
+require env("HOME")
+require stdout
+require time
+require exec("powershell")
+require exec("sh")
+require exec("open")
+require exec("xdg-open")
+
+let BASE be "http://127.0.0.1:7171"
+let WIN be platform()["os"] == "windows"
+
+task say(t)
+    print(t)
+
+task fail(t)
+    print("atr: " + t)
+    exit(1)
+
+task conf()
+    try
+        give json_decode(read_file("~/.atril/daemon.json"))
+    recover e
+        give nothing
+
+task headers(c)
+    give {"Authorization": "Bearer " + c["token"]}
+
+-- the daemon answers with this machine's key
+task alive()
+    let c be conf()
+    when c == nothing
+        give false
+    try
+        let r be http_get(BASE + "/api/info", headers(c), nothing, 2)
+        give ok of r
+    recover e
+        give false
+
+task up()
+    when alive()
+        give conf()
+    let home be env("ATRIL_HOME", "")
+    when home == ""
+        fail("ATRIL_HOME is not set: run atr through its launcher (atr.cmd or atr)")
+    let dir be home + "/daemon"
+    let exe be self_path()
+    when WIN
+        -- no -Redirect*: with it the daemon inherits this pipe and `run` would wait for it forever
+        let q be (t) => "'" + replace(t, "'", "''") + "'"
+        run("powershell", ["-NoProfile", "-Command", "Start-Process -WindowStyle Hidden -FilePath " + q(exe) + " -ArgumentList 'serve','atrild.syn' -WorkingDirectory " + q(dir)])
+    otherwise
+        run("sh", ["-c", "mkdir -p \"$HOME/.atril\" && cd \"$1\" && nohup \"$2\" serve atrild.syn >\"$HOME/.atril/daemon.log\" 2>&1 &", "sh", dir, exe])
+    let tries be 0
+    while not alive() and tries < 40
+        sleep(0.25)
+        set tries to tries + 1
+    when not alive()
+        fail("the daemon did not start; look at ~/.atril/daemon.log")
+    give conf()
+
+task api(method, path, body)
+    let c be up()
+    let r be nothing
+    when method == "GET"
+        set r to http_get(BASE + path, headers(c))
+    otherwise when method == "POST"
+        set r to http_post(BASE + path, body, headers(c))
+    otherwise
+        set r to http_delete(BASE + path, headers(c))
+    when not (ok of r)
+        let j be json of r
+        fail(when j != nothing then text(get(j, "error", body of r)) otherwise body of r)
+    give json of r
+
+task open_window(ref)
+    let c be up()
+    let url be BASE + "/#t=" + c["token"] + (when ref == nothing then "" otherwise "&s=" + ref)
+    when WIN
+        try
+            run("powershell", ["-NoProfile", "-Command", "Start-Process msedge -ArgumentList '--app=" + url + "'"])
+        recover e
+            run("powershell", ["-NoProfile", "-Command", "Start-Process '" + url + "'"])
+    otherwise when platform()["os"] == "macos"
+        try
+            run("open", ["-na", "Google Chrome", "--args", "--app=" + url])
+        recover e
+            run("open", [url])
+    otherwise
+        run("xdg-open", [url])
+
+task ago(ts)
+    let d be now() - ts
+    when d < 60
+        give text(floor(d)) + "s"
+    when d < 3600
+        give text(floor(d / 60)) + "m"
+    when d < 86400
+        give text(floor(d / 3600)) + "h"
+    give text(floor(d / 86400)) + "d"
+
+task pad(t, n)
+    let s be text(t)
+    while length(s) < n
+        set s to s + " "
+    give s
+
+task list(as_json)
+    let items be api("GET", "/api/sessions", nothing)["items"]
+    when as_json
+        say(json_encode(items))
+        give nothing
+    when length(items) == 0
+        say("no sessions. `atr run` opens one.")
+        give nothing
+    say(pad("ID", 6) + pad("NAME", 20) + pad("PID", 8) + pad("STATE", 12) + pad("AGE", 6) + "COMMAND")
+    each s in items
+        let st be s["activity"]
+        when s["status"] == "exited"
+            set st to "exited " + text(s["exit_code"])
+        otherwise when s["bell"]
+            set st to "needs you"
+        say(pad(s["id"], 6) + pad(s["name"], 20) + pad(s["pid"], 8) + pad(st, 12) + pad(ago(s["started"]), 6) + s["cmd"] + " " + join(s["args"], " "))
+
+-- `atr run`: flags first, then the command and its arguments untouched
+task new_session(rest)
+    let body be {}
+    let i be 0
+    let open be false
+    while i < length(rest) and starts_with(rest[i], "--")
+        let f be rest[i]
+        when f == "--"
+            set i to i + 1
+            stop
+        when f == "--open"
+            set open to true
+            set i to i + 1
+        otherwise when (f == "--name" or f == "--cwd") and i + 1 < length(rest)
+            set body[slice(f, 2)] to rest[i + 1]
+            set i to i + 2
+        otherwise
+            fail("unknown flag " + f)
+    when i < length(rest)
+        set body["cmd"] to rest[i]
+        set body["args"] to slice(rest, i + 1)
+    let s be api("POST", "/api/sessions", body)
+    say(s["id"] + "  " + s["name"] + "  pid " + text(s["pid"]))
+    when open
+        open_window(s["id"])
+
+let a be args()
+let cmd be when length(a) == 0 then "open" otherwise a[0]
+let rest be when length(a) > 1 then slice(a, 1) otherwise []
+
+when cmd == "open"
+    open_window(when length(rest) > 0 then rest[0] otherwise nothing)
+otherwise when cmd == "run" or cmd == "new"
+    new_session(rest)
+otherwise when cmd == "ls" or cmd == "list"
+    list(contains(rest, "--json"))
+otherwise when cmd == "kill"
+    when length(rest) == 0
+        fail("atr kill <session>")
+    api("POST", "/api/sessions/" + rest[0] + "/kill", {})
+    say("killed " + rest[0])
+otherwise when cmd == "rm"
+    when length(rest) == 0
+        fail("atr rm <session>")
+    api("DELETE", "/api/sessions/" + rest[0], nothing)
+    say("removed " + rest[0])
+otherwise when cmd == "up"
+    let c be up()
+    say("atril is running on " + BASE + " (" + c["machine"] + ")")
+otherwise when cmd == "down"
+    when alive()
+        try
+            api("POST", "/api/shutdown", {})
+        recover e
+            set e to e
+    say("atril stopped")
+otherwise
+    say("atr open [session] | run [--name N] [--cwd D] [--open] [cmd args…] | ls [--json] | kill <s> | rm <s> | up | down")
