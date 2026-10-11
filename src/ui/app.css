@@ -32,7 +32,9 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .brand .ext { color: var(--muted); font-weight: 400; }
 .brand .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 1px; }
 .label { color: var(--muted); padding: 12px 8px 4px; font-weight: 600; font-size: 12px; letter-spacing: .6px; text-transform: uppercase; }
-.label.split { display: flex; justify-content: space-between; align-items: baseline; }
+.label.split { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.label.split > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.label.split .mini { flex: none; white-space: nowrap; }
 .label .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .mini { color: var(--accent); font-size: 12px; text-transform: none; letter-spacing: 0; font-weight: 600; }
 .mini:hover { text-decoration: underline; }

@@ -390,9 +390,12 @@ function dropTerm(key) {
 }
 
 // a new session in the space on screen (its machine, its folder)
-async function newTab(body = {}) {
-  const sp = spaceOf(current);
-  const mid = sp ? sp.mid : LOCAL;
+// a new session: on the machine given, else on the device chosen in the sidebar; in the space on
+// screen when it is that machine's, else in the user's home folder there (which becomes a space)
+async function newTab(body = {}, onMid = null) {
+  const mid = onMid || machineSel;
+  const cur = spaceOf(current);
+  const sp = cur && cur.mid === mid ? cur : null;
   const t = terms.get(lastTab[current]);
   const s = await api("POST", base(mid) + "/sessions", {
     cols: t ? t.term.cols : 120, rows: t ? t.term.rows : 32,
@@ -410,7 +413,7 @@ async function restart(key) {
   await api("DELETE", `${base(s.mid)}/sessions/${s.id}`);
   sessions.delete(key);
   current = spaceId(s.mid, s.space);
-  await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name });
+  await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name }, s.mid);
 }
 
 // `atr open [session]` while this window is open: show it here
@@ -676,7 +679,7 @@ async function choose(path) {
     $("#picker").hidden = true;
     current = spaceId(picker.mid, key);
     store.set("space2", current);
-    await newTab({ cwd: path });
+    await newTab({ cwd: path }, picker.mid);
   } catch (e) { $("#pmsg").textContent = e.message; }
 }
 
@@ -981,7 +984,8 @@ $("#open-term").onclick = () => newTab().catch((err) => notice(err.message));
 // with no terminal on screen, Enter or + open one (inside a terminal they are just keys)
 document.addEventListener("keydown", (e) => {
   if ($("#empty").hidden || e.ctrlKey || e.altKey || e.metaKey) return;
-  if (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  // a key typed into a field (a title, a search) is that field's
+  if (/INPUT|TEXTAREA/.test(e.target.tagName) || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) return;
   if (!$("#palette").hidden || !$("#picker").hidden || !$("#conn").hidden || !$("#dialog").hidden) return;
   if (e.key === "Enter" || e.key === "+") { e.preventDefault(); newTab().catch((err) => notice(err.message)); }
 });
