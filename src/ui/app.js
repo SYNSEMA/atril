@@ -803,46 +803,41 @@ async function forgetSpace(sp) {
   const running = inSpace(sp.sid).filter((s) => s.status === "running");
   let stop = false;
   if (running.length) {
-    const names = running.map((s) => `${untitled(s) && isAgent(s) ? s.kind : s.name} (pid ${s.pid})`).join(", ");
-    const v = await ask(`En ${sp.name} todavía corre: ${names}.\n\nSi olvidás el space, eso se termina.`,
-      [{ label: "Cancelar", value: false }, { label: "Terminar y olvidar", value: true, kind: "danger" }]);
+    const names = running.map((s) => `${untitled(s) && isAgent(s) ? s.kind : s.name} (pid ${s.pid}${hidden.has(s.key) ? ", pestaña cerrada" : ""})`).join(", ");
+    const v = await ask(`En ${sp.name} todavía corre: ${names}.
+
+Si olvidás el space, eso se termina.`,
+      [{ label: "Cancelar", value: false }, { label: "Ver", value: "show" }, { label: "Terminar y olvidar", value: true, kind: "danger" }]);
+    if (v === "show") { reveal(running[0].key); return; }
     if (!v) return;
     stop = true;
+    // one by one: every Atril understands this, also an older one on another machine
+    for (const s of running) await api("POST", `${base(s.mid)}/sessions/${s.id}/kill`).catch(() => {});
+    for (let i = 0; i < 40 && inSpace(sp.sid).some((s) => s.status === "running"); i++) await new Promise((r) => setTimeout(r, 200));
+    if (inSpace(sp.sid).some((s) => s.status === "running")) {
+      const mm = machineOf(sp.mid);
+      const old = sp.mid !== LOCAL && mm && mm.version !== myVersion;
+      await notice(old
+        ? `No pude terminar lo que corre en ${sp.name}: ${machineName(mm)} tiene un Atril más viejo (${mm.version || "?"}), que no termina las shells de Linux.
+Actualizalo con clic derecho en su pestaña → Actualizar Atril ahí, y volvé a probar.`
+        : `Lo que corre en ${sp.name} no terminó. Probá de nuevo en unos segundos.`);
+      return;
+    }
   } else {
-    const v = await ask(`¿Olvidar ${sp.name}?\nSólo deja de aparecer acá: la carpeta no se toca.`,
+    const v = await ask(`¿Olvidar ${sp.name}?
+Sólo deja de aparecer acá: la carpeta no se toca.`,
       [{ label: "Cancelar", value: false }, { label: "Olvidar", value: true, kind: "primary" }]);
     if (!v) return;
   }
   await api("POST", base(sp.mid) + "/spaces/forget", { key: sp.key, stop });
-  for (const s of inSpace(sp.sid)) { dropTerm(s.key); if (s.status !== "running") sessions.delete(s.key); }
+  for (const s of inSpace(sp.sid)) {
+    dropTerm(s.key);
+    if (s.status !== "running") api("DELETE", `${base(s.mid)}/sessions/${s.id}`).catch(() => {});
+    sessions.delete(s.key);
+  }
   if (current === sp.sid) { current = null; store.set("space2", null); }
   spacesBy[sp.mid] = (spacesBy[sp.mid] || []).filter((x) => x.key !== sp.key);
   renderSide();
-}
-
-// install this computer's Atril on a connected machine again; the dialog of "connect" shows the steps
-async function updateMachine(mm) {
-  const ok = await ask(`¿Actualizar Atril en ${machineName(mm)} a la versión de esta computadora (${myVersion})?\nLo que corre en Atril allá se cierra; los spaces quedan.`,
-    [{ label: "Cancelar", value: false }, { label: "Actualizar", value: true, kind: "primary" }]);
-  if (!ok) return;
-  openConnect();
-  $("#cgo").hidden = true;
-  working(true);
-  logLine(`Actualizando Atril en ${machineName(mm)}…`);
-  const ws = new WebSocket(WS + `/api/machines/${encodeURIComponent(mm.mid)}/update`);
-  connWs = ws;
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.t === "step") logLine(m.msg);
-    else if (m.t === "done") {
-      working(false);
-      const r = m.result || {};
-      if (r.ok) { logLine("Listo: actualizado. Reconectando.", "ok"); setTimeout(closeConnect, 1500); }
-      else logLine(r.error || "No se pudo actualizar.", "err");
-      connWs = null;
-    }
-  };
-  ws.onclose = () => { if (connWs === ws) { logLine("Se cortó la conexión con Atril.", "err"); working(false); connWs = null; } };
 }
 
 // ---- context menus

@@ -315,10 +315,14 @@ agent Session
     let screen be ""            -- the last few thousand characters as a person reads them
     let screen_kind be nothing  -- the agent the screen shows running, when it shows one
     let folder be nothing       -- where the shell last said it was
+    let kill_at be nothing      -- asked to end: when to stop asking nicely
     -- whatever goes wrong in here, the session must not stay "running" with nobody reading it
     try
         while true
             let ev be select({"p": p, "in": inbox}, 1)
+            when kill_at != nothing and now() > kill_at and proc_status(p) == "running"
+                proc_kill(p, "KILL")
+                set kill_at to nothing
             when ev == nothing
                 -- quiet for 3 s: an agent waiting for you, or a shell at its prompt
                 when meta["activity"] == "working" and now() - last_out > 3
@@ -406,7 +410,10 @@ agent Session
                     otherwise when m["t"] == "r"
                         proc_resize(p, m["cols"], m["rows"])
                     otherwise when m["t"] == "kill"
+                        -- TERM first, so a program can close in order; an interactive bash ignores it,
+                        -- so KILL if it is still there 3 s later
                         proc_kill(p)
+                        set kill_at to now() + 3
                 recover err
                     set meta["input_error"] to text(err)
                 when m["t"] == "snap"
