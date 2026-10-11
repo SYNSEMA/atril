@@ -79,21 +79,33 @@ task default_shell()
         give {"cmd": "powershell", "args": ["-NoLogo"]}
     give {"cmd": env("SHELL", "bash"), "args": ["-l"]}
 
+-- the agents Atril knows by their command; add yours to ~/.atril/agents.json (["myagent", …])
+task extra_agents()
+    try
+        let extra be json_decode(read_file("~/.atril/agents.json"))
+        give where(extra, (x) => type_of(x) == "text" and x != "")
+    recover e
+        give []
+
+let AGENTS be ["claude", "codex", "opencode", "gemini", "aider", "goose", "amp", "cursor-agent", "ollama", "lampson", "qwen", "crush", "droid", "kiro-cli", "copilot"] + apply(extra_agents(), (x) => lower(x))
+
 -- what runs in it, from the program's name: the sidebar groups and marks agents by it
 task kind_of(cmd)
     let file be lower(regex_replace(cmd, "^.*[\\\\/]", ""))
     let base be regex_replace(file, "\\.(exe|cmd|bat|ps1)$", "")
-    each k in ["claude", "codex", "opencode", "gemini", "aider", "goose", "amp", "cursor-agent", "ollama"]
-        when base == k
-            give k
+    when base in AGENTS
+        give base
     give "shell"
 
 -- an agent started inside a shell names itself in the title ("✳ Claude Code"): then the session is that agent
 task kind_from_title(title)
     let t be lower(text(title))
-    each pair in [["claude code", "claude"], ["codex", "codex"], ["opencode", "opencode"], ["gemini", "gemini"], ["aider", "aider"], ["goose", "goose"]]
+    each pair in [["claude code", "claude"], ["codex", "codex"], ["opencode", "opencode"], ["gemini", "gemini"], ["aider", "aider"], ["goose", "goose"], ["lampson", "lampson"]]
         when contains(t, pair[0])
             give pair[1]
+    -- OpenCode names its window after the conversation: "OC | Saludo rápido"
+    when starts_with(t, "oc | ")
+        give "opencode"
     give nothing
 
 -- the agent a typed command starts: "codex", "npx @openai/codex", "claude --resume" → its kind, or nothing
@@ -109,7 +121,7 @@ task agent_of(command)
 
 -- what an agent prints when it starts, for one launched some other way (a script, an alias)
 task agent_in_banner(text_after)
-    each pair in [["OpenAI Codex", "codex"], ["Claude Code", "claude"], ["Gemini CLI", "gemini"], ["opencode", "opencode"], ["Aider v", "aider"]]
+    each pair in [["OpenAI Codex", "codex"], ["Claude Code", "claude"], ["Gemini CLI", "gemini"], ["opencode", "opencode"], ["Aider v", "aider"], ["harness de agente en Synsema", "lampson"]]
         when contains(text_after, pair[0])
             give pair[1]
     give nothing
@@ -279,90 +291,109 @@ agent Session
     let screen be ""            -- the last few thousand characters as a person reads them
     let screen_kind be nothing  -- the agent the screen shows running, when it shows one
     let folder be nothing       -- where the shell last said it was
-    while true
-        let ev be select({"p": p, "in": inbox}, 1)
-        when ev == nothing
-            -- quiet for 3 s: an agent waiting for you, or a shell at its prompt
-            when meta["activity"] == "working" and now() - last_out > 3
-                set meta["activity"] to "idle"
-                publish_meta(meta)
-        otherwise when ev["name"] == "p"
-            when ev["type"] == "exit"
-                set meta["status"] to "exited"
-                set meta["activity"] to "idle"
-                set meta["exit_code"] to ev["data"]["exit_code"]
-                set meta["ended"] to now()
-                state_set("tail:" + sid, slice(buf, -65536))
-                publish_meta(meta)
-                bus_publish("out." + sid, {"t": "exit", "code": ev["data"]["exit_code"]})
-                stop
-            let chunk be ev["data"]
-            set seq to seq + 1
-            set buf to buf + chunk
-            when length(buf) > KEEP * 2
-                set buf to slice(buf, length(buf) - KEEP)
-            set last_out to now()
-            bus_publish("out." + sid, {"t": "o", "s": seq, "d": chunk})
-            let changed be meta["activity"] != "working"
-            set meta["activity"] to "working"
-            let t be title_in(chunk)
-            when t != nothing and t != meta["title"]
-                set meta["title"] to t
-                set changed to true
-            -- what runs now: the title an agent sets, else what was typed at the prompt or what the
-            -- agent printed, else the program the session started with
-            -- reading the screen is a nicety: a mistake in it must never take the terminal down
-            try
-                set screen to slice(screen + strip_ansi(chunk), -6000)
-                let seen be read_screen(screen)
-                when seen != nothing
-                    when seen["at_prompt"]
-                        set screen_kind to nothing
-                    otherwise
-                        let typed be agent_of(seen["typed"])
-                        set screen_kind to (when typed != nothing then typed otherwise agent_in_banner(seen["after"]))
-                    -- the space follows the shell into a repository (or a space you already have)
-                    when seen["folder"] != folder
-                        set folder to seen["folder"]
-                        set meta["here"] to folder
-                        let root be git_root(folder)
-                        let target be root
-                        when target == nothing
-                            each sp in state_get("spaces", [])
-                                when sp["key"] == space_key(folder)
-                                    set target to sp["path"]
-                        when target != nothing and space_key(target) != meta["space"]
-                            set meta["space"] to add_space(target)
-                        set changed to true
-                let tk be kind_from_title(meta["title"])
-                let kind be when tk != nothing then tk otherwise (when screen_kind != nothing then screen_kind otherwise kind_of(cmd))
-                when kind != meta["kind"]
-                    set meta["kind"] to kind
-                    set changed to true
-            recover err
-                set meta["screen_error"] to text(err)
-            -- a bell outside a title: the program asks for attention
-            when not meta["bell"] and contains(regex_replace(chunk, "\u001b\\][^\u0007]*\u0007", ""), "\u0007")
-                set meta["bell"] to true
-                set changed to true
-            when changed
-                publish_meta(meta)
-        otherwise
-            let m be ev["data"]
-            when m["t"] == "i"
-                proc_send(p, m["d"])
-                when meta["bell"]
-                    set meta["bell"] to false
+    -- whatever goes wrong in here, the session must not stay "running" with nobody reading it
+    try
+        while true
+            let ev be select({"p": p, "in": inbox}, 1)
+            when ev == nothing
+                -- quiet for 3 s: an agent waiting for you, or a shell at its prompt
+                when meta["activity"] == "working" and now() - last_out > 3
+                    set meta["activity"] to "idle"
                     publish_meta(meta)
-            otherwise when m["t"] == "r"
-                proc_resize(p, m["cols"], m["rows"])
-            otherwise when m["t"] == "snap"
-                bus_publish("out." + sid, {"t": "snap", "s": seq, "d": buf, "to": m["to"]})
-            otherwise when m["t"] == "kill"
-                proc_kill(p)
-            otherwise when m["t"] == "name"
-                set meta["name"] to m["name"]
-                publish_meta(meta)
+            otherwise when ev["name"] == "p"
+                when ev["type"] == "exit"
+                    set meta["status"] to "exited"
+                    set meta["activity"] to "idle"
+                    set meta["exit_code"] to ev["data"]["exit_code"]
+                    set meta["ended"] to now()
+                    state_set("tail:" + sid, slice(buf, -65536))
+                    publish_meta(meta)
+                    bus_publish("out." + sid, {"t": "exit", "code": ev["data"]["exit_code"]})
+                    stop
+                let chunk be ev["data"]
+                set seq to seq + 1
+                set buf to buf + chunk
+                when length(buf) > KEEP * 2
+                    set buf to slice(buf, length(buf) - KEEP)
+                set last_out to now()
+                bus_publish("out." + sid, {"t": "o", "s": seq, "d": chunk})
+                let changed be meta["activity"] != "working"
+                set meta["activity"] to "working"
+                let t be title_in(chunk)
+                when t != nothing and t != meta["title"]
+                    set meta["title"] to t
+                    set changed to true
+                -- what runs now: the title an agent sets, else what was typed at the prompt or what the
+                -- agent printed, else the program the session started with
+                -- reading the screen is a nicety: a mistake in it must never take the terminal down
+                try
+                    set screen to slice(screen + strip_ansi(chunk), -6000)
+                    let seen be read_screen(screen)
+                    when seen != nothing
+                        -- Enter after the last prompt: what was typed runs until a new prompt appears, even
+                        -- while it has printed nothing but control codes yet (a full-screen program starting)
+                        let entered be starts_with(seen["after"], "\r") or starts_with(seen["after"], "\n")
+                        when entered
+                            let typed be agent_of(seen["typed"])
+                            set screen_kind to (when typed != nothing then typed otherwise agent_in_banner(seen["after"]))
+                        otherwise
+                            set screen_kind to nothing
+                        -- the space follows the shell into a repository (or a space you already have)
+                        when seen["folder"] != folder
+                            set folder to seen["folder"]
+                            set meta["here"] to folder
+                            let root be git_root(folder)
+                            let target be root
+                            when target == nothing
+                                each sp in state_get("spaces", [])
+                                    when sp["key"] == space_key(folder)
+                                        set target to sp["path"]
+                            when target != nothing and space_key(target) != meta["space"]
+                                set meta["space"] to add_space(target)
+                            set changed to true
+                    let tk be kind_from_title(meta["title"])
+                    let kind be when tk != nothing then tk otherwise (when screen_kind != nothing then screen_kind otherwise kind_of(cmd))
+                    when kind != meta["kind"]
+                        set meta["kind"] to kind
+                        set changed to true
+                recover err
+                    set meta["screen_error"] to text(err)
+                -- a bell outside a title: the program asks for attention
+                when not meta["bell"] and contains(regex_replace(chunk, "\u001b\\][^\u0007]*\u0007", ""), "\u0007")
+                    set meta["bell"] to true
+                    set changed to true
+                when changed
+                    publish_meta(meta)
+            otherwise
+                let m be ev["data"]
+                -- a key or a size that reaches a program while it closes fails to write ("the pipe is
+                -- being closed"): drop it; the program's exit arrives as its own event and ends the session
+                try
+                    when m["t"] == "i"
+                        proc_send(p, m["d"])
+                        when meta["bell"]
+                            set meta["bell"] to false
+                            publish_meta(meta)
+                    otherwise when m["t"] == "r"
+                        proc_resize(p, m["cols"], m["rows"])
+                    otherwise when m["t"] == "kill"
+                        proc_kill(p)
+                recover err
+                    set meta["input_error"] to text(err)
+                when m["t"] == "snap"
+                    bus_publish("out." + sid, {"t": "snap", "s": seq, "d": buf, "to": m["to"]})
+                otherwise when m["t"] == "name"
+                    set meta["name"] to m["name"]
+                    publish_meta(meta)
+    recover err
+        set meta["status"] to "exited"
+        set meta["activity"] to "idle"
+        set meta["ended"] to now()
+        set meta["error"] to text(err)
+        state_set("tail:" + sid, slice(buf, -65536))
+        publish_meta(meta)
+        bus_publish("out." + sid, {"t": "exit", "code": nothing})
+        proc_close(p)
 
 -- what a window may send to a session, and nothing else: keys, or a new size
 task clean_input(m)

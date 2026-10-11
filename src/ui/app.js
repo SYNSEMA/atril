@@ -60,6 +60,13 @@ function label(s) {
 const inSpace = (key) => [...sessions.values()].filter((s) => s.space === key).sort((a, b) => a.started - b.started);
 const spaceOf = (key) => spaces.find((sp) => sp.key === key);
 
+// what runs now and where, first; the program the session started with last
+function tooltip(s) {
+  const what = isAgent(s) ? s.kind : "terminal";
+  const started = `${s.cmd} ${(s.args || []).join(" ")}`.trim();
+  return `${s.name} — ${what}, ${label(s)}\n${s.here || s.cwd}\npid ${s.pid} · ${s.id} · empezó con: ${started}`;
+}
+
 // a tab's name: what you called it, else the agent, else its number in the space
 function tabName(s, i) {
   const auto = /^[a-z-]+-\d+$/.test(s.name);
@@ -114,7 +121,7 @@ function agentItem(s) {
   const li = document.createElement("li");
   const st = statusOf(s);
   li.className = s.id === lastTab[current] && s.space === current ? "open" : "";
-  li.title = `${s.cmd} ${(s.args || []).join(" ")}\n${s.cwd}\npid ${s.pid} · ${s.id}`;
+  li.title = tooltip(s);
   li.innerHTML = `<span class="st ${st === "idle" ? "bell" : st}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
   li.querySelector(".name").textContent = s.name;
   li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
@@ -184,7 +191,7 @@ function renderTabs() {
     const x = el.querySelector(".x");
     x.textContent = "×";
     x.title = s.status === "running" ? "Cerrar pestaña (el programa sigue: está en agents / find)" : "Cerrar y olvidar";
-    el.title = `${s.name} · ${label(s)} · doble clic para ponerle título`;
+    el.title = tooltip(s) + "\n(doble clic para ponerle título)";
     el.onclick = (e) => { if (e.target !== x && e.target.tagName !== "INPUT") focusTab(s.id); };
     x.onclick = () => closeTab(s.id);
     el.onauxclick = (e) => { if (e.button === 1) closeTab(s.id); };
