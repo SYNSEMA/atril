@@ -1,9 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <rect width="256" height="256" rx="56" fill="#0c0c0d"/>
-  <!-- the score on the stand: a terminal prompt -->
-  <path d="M58 52 h140 l-12 92 h-116 z" fill="#8fb4ff"/>
-  <path d="M86 80 l22 16 -22 16" fill="none" stroke="#0c0c0d" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M120 116 h34" stroke="#0c0c0d" stroke-width="12" stroke-linecap="round"/>
-  <!-- the stand -->
-  <path d="M128 144 v52 M128 196 l-38 26 M128 196 l38 26 M128 196 v28" fill="none" stroke="#e6e6ea" stroke-width="12" stroke-linecap="round"/>
+  <!-- a green phosphor prompt on a dark screen: the same mark as the site (site/favicon.svg) -->
+  <rect width="256" height="256" rx="40" fill="#03100a"/>
+  <path d="M56 80 l56 48 -56 48" fill="none" stroke="#4dff7c" stroke-width="28" stroke-linecap="square"/>
+  <rect x="128" y="160" width="72" height="24" fill="#4dff7c"/>
 </svg>

@@ -42,7 +42,7 @@ use "./window.syn" as window
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
-let VERSION be "0.3.0"
+let VERSION be "0.3.1"
 
 task say(t)
     print(t)
