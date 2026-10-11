@@ -14,14 +14,14 @@
   <aside id="side">
     <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
 
-    <div class="label">spaces</div>
-    <div id="mtabs"></div>
-    <ul id="spaces"></ul>
+    <button id="find" class="search" title="Buscar cualquier sesión, en cualquier dispositivo">⌕ buscar sesiones… <kbd>Ctrl+Shift+K</kbd></button>
 
-    <div class="row">
-      <button id="new" class="link" title="Nuevo space: una carpeta de trabajo">new</button>
-      <button id="find" class="link" title="Buscar cualquier sesión (Ctrl+Shift+K)">find</button>
-    </div>
+    <div class="label">dispositivos</div>
+    <ul id="devices"></ul>
+    <button id="adddev" class="addrow" title="Un servidor u otra computadora, por SSH">+ Agregar dispositivo</button>
+
+    <div class="label split"><span>spaces <span id="spwhere" class="muted"></span></span><button id="new" class="mini" title="Abrir una carpeta de trabajo en este dispositivo">+ nuevo</button></div>
+    <ul id="spaces"></ul>
 
     <div class="label">agents <span id="count" class="muted"></span></div>
     <ul id="agents"></ul>

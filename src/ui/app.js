@@ -153,6 +153,8 @@ setInterval(async () => {
 // ---- sidebar
 const STATUS_TEXT = { up: "conectada", connecting: "conectando…", down: "sin conexión, reintentando" };
 const machineName = (mm) => mm.name || (mm.mid === LOCAL ? "esta computadora" : mm.target);
+const ICON_LAPTOP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>';
+const ICON_SERVER = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
 
 // a machine's tab shows its spaces and the space you used last there (or its first one)
 const lastSpace = store.get("lastSpace", {});   // mid -> space id
@@ -170,31 +172,32 @@ function renderSide() {
   if (!machineOf(machineSel)) machineSel = LOCAL;
   const many = machines.length > 1;
 
-  // one tab per machine; + connects another
-  const tabs = $("#mtabs");
-  tabs.innerHTML = "";
+  // devices: this computer first, then the connected ones; a status only when there is one to say
+  const dl = $("#devices");
+  dl.innerHTML = "";
   for (const mm of machines) {
-    const b = document.createElement("button");
-    b.className = mm.mid === machineSel ? "on" : "";
-    b.innerHTML = `<span class="st ${mm.mid === LOCAL ? "up" : mm.status}"></span><span></span>`;
+    const li = document.createElement("li");
+    li.className = mm.mid === machineSel ? "on" : "";
     const old = mm.mid !== LOCAL && mm.status === "up" && mm.version !== myVersion;
-    b.lastChild.textContent = machineName(mm) + (old ? " ↑" : "");
-    b.title = mm.mid === LOCAL ? "Esta computadora" : `${mm.target} · ${STATUS_TEXT[mm.status] || mm.status}${mm.error ? "\n" + mm.error : ""}\n${old ? `\nTiene Atril ${mm.version || "viejo"}; acá está ${myVersion}: clic derecho → Actualizar Atril ahí` : ""}\n(clic derecho: reconectar, actualizar, desconectar)`;
-    b.onclick = () => selectMachine(mm.mid);
-    b.oncontextmenu = (e) => { e.preventDefault(); showMachineMenu(mm, e.clientX, e.clientY); };
-    tabs.append(b);
+    const [txt, cls] = mm.mid === LOCAL ? ["esta PC", ""]
+      : mm.status === "connecting" ? ["conectando…", "busy"]
+      : mm.status !== "up" ? ["sin conexión", "warn"]
+      : old ? ["actualizar ↑", "upd"] : ["", ""];
+    li.innerHTML = `<span class="ic">${mm.mid === LOCAL ? ICON_LAPTOP : ICON_SERVER}</span><span class="dn"></span><span class="ds ${cls}"></span>`;
+    li.querySelector(".dn").textContent = machineName(mm);
+    li.querySelector(".ds").textContent = txt;
+    li.title = mm.mid === LOCAL ? "Esta computadora"
+      : `${mm.target} · ${STATUS_TEXT[mm.status] || mm.status}${mm.error ? "\n" + mm.error : ""}${old ? `\nTiene Atril ${mm.version || "viejo"}; acá está ${myVersion}: clic derecho → Actualizar Atril ahí` : ""}\n(clic derecho: reconectar, actualizar, desconectar)`;
+    li.onclick = () => { if (old && mm.mid === machineSel) return updateMachine(mm); selectMachine(mm.mid); };
+    li.oncontextmenu = (e) => { e.preventDefault(); showMachineMenu(mm, e.clientX, e.clientY); };
+    dl.append(li);
   }
-  const add = document.createElement("button");
-  add.className = "add";
-  add.textContent = "+";
-  add.title = "Conectar otra máquina (un servidor o una computadora, por SSH)";
-  add.onclick = openConnect;
-  tabs.append(add);
 
   // the spaces of the machine chosen above
   const ul = $("#spaces");
   ul.innerHTML = "";
   const mm = machineOf(machineSel);
+  $("#spwhere").textContent = many ? "· " + machineName(mm) : "";
   const list = spacesBy[mm.mid] || [];
   if (mm.mid !== LOCAL && mm.status !== "up") {
     const li = document.createElement("li");
@@ -205,7 +208,7 @@ function renderSide() {
   } else if (!list.length) {
     const li = document.createElement("li");
     li.className = "mempty";
-    li.textContent = `Sin spaces en ${machineName(mm)}: new para abrir una carpeta.`;
+    li.textContent = `Ningún space en ${machineName(mm)} todavía: «+ nuevo» abre una carpeta.`;
     ul.append(li);
   }
   for (const sp of list) ul.append(spaceItem(mm, sp));
@@ -266,7 +269,9 @@ function spaceItem(mm, sp) {
   const running = list.filter((s) => s.status === "running");
   const needs = running.some((s) => isAgent(s) && statusOf(s) !== "working");
   const busy = running.some((s) => statusOf(s) === "working");
-  li.innerHTML = `<span class="st ${needs ? "bell" : busy ? "working" : running.length ? "idle" : "exited"}"></span><span class="name"></span><span class="meta"></span><span class="branch"></span>`;
+  // a dot only when there is something to look at: an agent waiting for you, or work going on
+  li.title = sp.path + (needs ? "\nun agente te espera" : busy ? "\nalgo está trabajando" : "");
+  li.innerHTML = `<span class="st ${needs ? "bell" : busy ? "working" : "none"}"></span><span class="name"></span><span class="meta"></span><span class="branch"></span>`;
   li.querySelector(".name").textContent = sp.name;
   li.querySelector(".meta").textContent = running.length || "";
   li.querySelector(".branch").textContent = sp.branch || "";
@@ -319,7 +324,7 @@ function renderTabs() {
     el.dataset.key = s.key;
     el.ondblclick = (e) => { if (e.target !== el.querySelector(".x")) renameTab(s.key); };
     const st = statusOf(s);
-    el.innerHTML = `<span class="st ${st === "idle" && isAgent(s) ? "bell" : st}"></span><span class="t"></span><button class="x"></button>`;
+    el.innerHTML = `<span class="st ${st === "idle" && isAgent(s) ? "bell" : st === "idle" ? "none" : st}"></span><span class="t"></span><button class="x"></button>`;
     el.querySelector(".t").textContent = tabName(s, i);
     const x = el.querySelector(".x");
     x.textContent = "×";
@@ -973,6 +978,7 @@ setSide(store.get("side", true));
 
 $("#plus").onclick = askTitle;
 $("#new").onclick = () => openPicker();
+$("#adddev").onclick = openConnect;
 $("#find").onclick = openPalette;
 $("#menu").onclick = () => $("#side").classList.toggle("show");
 $("#stage").onclick = () => $("#side").classList.remove("show");

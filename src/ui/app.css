@@ -31,7 +31,30 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .brand { font-weight: 700; padding: 0 8px 10px; letter-spacing: .5px; }
 .brand .ext { color: var(--muted); font-weight: 400; }
 .brand .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 1px; }
-.label { color: var(--muted); padding: 10px 8px 4px; font-weight: 600; }
+.label { color: var(--muted); padding: 12px 8px 4px; font-weight: 600; font-size: 12px; letter-spacing: .6px; text-transform: uppercase; }
+.label.split { display: flex; justify-content: space-between; align-items: baseline; }
+.label .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.mini { color: var(--accent); font-size: 12px; text-transform: none; letter-spacing: 0; font-weight: 600; }
+.mini:hover { text-decoration: underline; }
+.search { display: flex; justify-content: space-between; align-items: center; margin: 0 2px 4px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 5px; color: var(--dim); font-size: 13px; text-align: left; }
+.search:hover { border-color: var(--muted); color: var(--muted); }
+.search kbd { font-size: 10px; color: var(--dim); }
+
+/* devices: this computer first, then the connected ones */
+#devices li { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 0 6px; padding: 7px 8px; border-radius: 4px; cursor: pointer; border-left: 2px solid transparent; }
+#devices li:hover { background: #18181c; }
+#devices li.on { background: var(--sel); border-left-color: var(--accent); }
+#devices li.on .dn { font-weight: 700; color: var(--text); }
+#devices .ic { color: var(--muted); display: flex; }
+#devices li.on .ic { color: var(--accent); }
+#devices .dn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+#devices .ds { font-size: 11px; color: var(--dim); }
+#devices .ds.warn { color: var(--warn); }
+#devices .ds.busy { color: var(--busy); }
+#devices .ds.upd { color: var(--accent); }
+.addrow { margin: 2px 2px 0; padding: 7px 10px; border: 1px dashed var(--line); border-radius: 5px; color: var(--muted); font-size: 13px; text-align: left; }
+.addrow:hover { border-color: var(--accent); color: var(--accent); }
+.st.none { background: transparent; }
 .row { display: flex; justify-content: space-between; padding: 8px 8px 6px; border-bottom: 1px solid var(--line); margin-top: auto; }
 .link { color: var(--muted); padding: 2px 0; }
 .link:hover { color: var(--text); }
