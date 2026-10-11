@@ -134,26 +134,37 @@ $ █</pre>
     Claude Code, Codex, OpenCode y Gemini corriendo en todas tus máquinas, en una sola ventana.
     Cada sesión vive en el daemon de Atril hasta que termina o la terminás vos.
   </p>
-  <div class="cta" id="bajar">
-    <a class="chip dark big" id="dl-windows" href="https://github.com/SYNSEMA/atril/releases/latest">Bajar para Windows</a>
-    <a class="chip big" id="dl-linux" href="#linux">Linux</a>
-    <a class="chip big off" id="dl-macos" aria-disabled="true">macOS · pronto</a>
+  <!-- instalar: una pestaña por sistema, cada una con su comando (la de tu sistema se abre sola) -->
+  <div class="cta" id="bajar" role="tablist" aria-label="Instalar Atril">
+    <button class="chip big tab" role="tab" data-os="windows" aria-selected="true">Windows</button>
+    <button class="chip big tab" role="tab" data-os="linux" aria-selected="false" id="linux">Linux</button>
+    <button class="chip big tab" role="tab" data-os="macos" aria-selected="false">macOS</button>
   </div>
+
+  <div class="os-panel" data-os="windows" role="tabpanel">
+    <div class="win cmd">
+      <div class="wt">PowerShell ▪ sin avisos de Windows</div>
+      <div class="wb"><code>irm https://synsema.github.io/atril/install.ps1 | iex</code><button class="copy" type="button">copiar</button></div>
+    </div>
+    <p class="how">Windows 10 y 11, sin permisos de administrador. Instala encima de la versión anterior y conserva tus ajustes.
+      O <a id="dl-windows" href="https://github.com/SYNSEMA/atril/releases/latest">bajá el .zip</a>, descomprimilo y abrí <b>Instalar Atril</b> (Windows puede preguntar si confiás en el archivo).</p>
+  </div>
+  <div class="os-panel" data-os="linux" role="tabpanel" hidden>
+    <div class="win cmd">
+      <div class="wt">Linux ▪ un servidor, una VPS, tu equipo</div>
+      <div class="wb"><code>curl -fsSL https://synsema.github.io/atril/install.sh | sh</code><button class="copy" type="button">copiar</button></div>
+    </div>
+    <p class="how">Sin root. Un servicio mantiene tus sesiones vivas aunque cierres la conexión SSH.</p>
+  </div>
+  <div class="os-panel" data-os="macos" role="tabpanel" hidden>
+    <div class="win cmd soon">
+      <div class="wt">macOS</div>
+      <div class="wb">Muy pronto.</div>
+    </div>
+    <p class="how">Mientras tanto, el comando de Linux funciona en macOS si tenés el motor de Synsema.</p>
+  </div>
+
   <p class="count"><span id="dl-count"></span>gratis ▪ Apache-2.0 ▪ sin cuentas</p>
-  <!-- desde la terminal: más fácil, y en Windows sin la marca de "bajado de internet" no hay avisos -->
-  <div class="win cmd">
-    <div class="wt">Windows ▪ PowerShell, sin avisos</div>
-    <div class="wb"><code>irm https://synsema.github.io/atril/install.ps1 | iex</code><button class="copy" type="button">copiar</button></div>
-  </div>
-  <div class="win cmd" id="linux">
-    <div class="wt">Linux y macOS ▪ un servidor, una VPS, tu equipo</div>
-    <div class="wb"><code>curl -fsSL https://synsema.github.io/atril/install.sh | sh</code><button class="copy" type="button">copiar</button></div>
-  </div>
-  <p class="how">
-    Sin permisos de administrador ni root. En Windows también podés bajar el .zip, descomprimirlo y abrir
-    <b>Instalar Atril</b> (Windows puede preguntar si confiás en el archivo). En Linux, un servicio mantiene
-    tus sesiones vivas aunque cierres la conexión SSH.
-  </p>
 
   <!-- la app de verdad -->
   <figure class="win shot">

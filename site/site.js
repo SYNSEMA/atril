@@ -1,5 +1,5 @@
 // site.js — lo único que cambia solo en el sitio: la última versión publicada (número, fecha y título),
-// las descargas de todas las versiones, los enlaces de descarga de cada sistema y las estrellas. Todo
+// las descargas de todas las versiones, el .zip de Windows y las estrellas; y las pestañas de sistema. Todo
 // sale de la API pública de GitHub; sin servidor propio. La respuesta se guarda una hora en este
 // navegador (la API deja 60 consultas por hora sin cuenta). Si falla, queda lo que dice el HTML.
 "use strict";
@@ -10,6 +10,17 @@
   var HOUR = 3600000;
 
   var $ = function (id) { return document.getElementById(id); };
+  // pestañas de sistema: muestran el comando de cada uno; abre la de quien mira
+  var tabs = document.querySelectorAll(".tab"), panels = document.querySelectorAll(".os-panel");
+  function showOs(os) {
+    Array.prototype.forEach.call(tabs, function (t) { t.setAttribute("aria-selected", String(t.dataset.os === os)); });
+    Array.prototype.forEach.call(panels, function (p) { p.hidden = p.dataset.os !== os; });
+  }
+  Array.prototype.forEach.call(tabs, function (t) { t.onclick = function () { showOs(t.dataset.os); }; });
+  var ua = navigator.userAgent;
+  showOs(location.hash === "#linux" ? "linux" : /Mac OS X|Macintosh/.test(ua) && !/Mobile/.test(ua) ? "macos" : /Linux|X11|CrOS/.test(ua) && !/Android/.test(ua) ? "linux" : "windows");
+  window.addEventListener("hashchange", function () { if (location.hash === "#linux") showOs("linux"); });
+
   // copiar los comandos de instalación
   Array.prototype.forEach.call(document.querySelectorAll(".cmd .copy"), function (btn) {
     if (!navigator.clipboard) return;
@@ -64,17 +75,7 @@
       return all.filter(function (a) { return /(x64|amd64|x86_64|arm64)/i.test(a.name); })[0] || all[0];
     };
     var win = find(/windows.*\.(zip|exe|msi)$/i);
-    var lin = find(/linux.*\.(tar\.gz|tgz|zip)$/i);
-    var mac = find(/(mac|darwin).*\.(tar\.gz|zip|dmg)$/i);
     if (win) $("dl-windows").href = win.browser_download_url;
-    if (lin) $("dl-linux").href = lin.browser_download_url;
-    if (mac) {
-      var m = $("dl-macos");
-      m.href = mac.browser_download_url;
-      m.textContent = "macOS";
-      m.classList.remove("off");
-      m.removeAttribute("aria-disabled");
-    }
   }).catch(function () {});
 
   // las estrellas, junto al enlace a GitHub

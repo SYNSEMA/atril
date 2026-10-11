@@ -202,3 +202,11 @@ a:focus-visible, summary:focus-visible { outline: 3px solid var(--fluor); outlin
 .copy { flex: none; background: var(--paper); color: var(--ink); border: 0; font: 20px var(--pix); padding: 2px 10px; cursor: pointer; }
 .copy:hover { background: var(--fluor); }
 @media (max-width: 760px) { .cmd code { font-size: 12px; } }
+
+/* pestañas de sistema: la elegida en negro */
+.tab { cursor: pointer; background: var(--paper); }
+.tab[aria-selected="true"] { background: var(--ink); color: var(--paper); }
+.os-panel .cmd { margin-top: 26px; }
+.os-panel .how { margin-top: 12px; }
+.cmd.soon .wb { color: var(--phos); font: 26px var(--pix); background: #020a05; }
+@media (max-width: 760px) { .tab.big { font-size: 19px; padding: 10px 12px; } }

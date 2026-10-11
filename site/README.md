@@ -6,8 +6,8 @@ by GitHub Pages from this folder.
 What changes by itself (`site.js`, from GitHub's public API, cached one hour in each browser):
 
 - the newest release: its number, date and title in the window at the top, and "Ver novedades"
-- the download buttons: the asset of each system in that release, by name
-  (`atril-<version>-windows-x64.zip`, `…-linux-x64.tar.gz`, `…-macos-….tar.gz`)
+- the Windows .zip link: that release's `atril-<version>-windows-x64.zip`
+- the install tabs (Windows, Linux, macOS) open on the visitor's system
 - the downloads of every release added up, and the stars next to the GitHub link
 - the year in the footer
 
