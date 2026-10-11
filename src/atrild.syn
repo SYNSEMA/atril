@@ -33,14 +33,25 @@ require env("USERPROFILE")
 require env("HOME")
 require file.write("~/.atril/*")
 require file.read          -- a space's .git/HEAD, wherever the project lives (its shells can read it anyway)
-require net("127.0.0.1:7171")
+require net("127.0.0.1")     -- this daemon, and the tunnels to the other machines
 
 use "./window.syn" as window
 
 let PORT be 7171
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
-let MACHINE be env("COMPUTERNAME", env("HOSTNAME", "this computer"))
+-- the name of this computer: Windows says it in COMPUTERNAME; on Linux a daemon started over SSH may
+-- not have HOSTNAME, so /etc/hostname
+task machine_name()
+    let n be env("COMPUTERNAME", env("HOSTNAME", ""))
+    when n == ""
+        try
+            set n to trim(read_file("/etc/hostname"))
+        recover e
+            set n to ""
+    give when n == "" then "this computer" otherwise n
+
+let MACHINE be machine_name()
 let HOME be env("USERPROFILE", env("HOME", "."))
 
 let BACKGROUND be length(args()) > 0 and args()[0] == "--background"
@@ -253,20 +264,31 @@ task suggestions()
                 set seen to seen
     give slice(sort_by(found, (r) => r["touched"], desc = true), 0, 40)
 
+-- the spaces live on disk, so they outlast the daemon (a reboot, an update)
+task load_spaces()
+    try
+        let list be json_decode(read_file("~/.atril/spaces.json"))
+        give when type_of(list) == "list" then list otherwise []
+    recover e
+        give []
+
+task save_spaces(list)
+    write_file("~/.atril/spaces.json", json_encode(list))
+
 task spaces_view()
     let out be []
-    each sp in state_get("spaces", [])
+    each sp in load_spaces()
         let name be regex_replace(regex_replace(replace(sp["path"], "\\", "/"), "/+$", ""), "^.*/", "")
         set out to out + [{"key": sp["key"], "path": sp["path"], "name": (when name == "" then sp["path"] otherwise name), "branch": git_branch(sp["path"])}]
     give out
 
 task add_space(path)
     let key be space_key(path)
-    let all be state_get("spaces", [])
+    let all be load_spaces()
     each sp in all
         when sp["key"] == key
             give key
-    state_set("spaces", all + [{"key": key, "path": real_case(path)}])
+    save_spaces(all + [{"key": key, "path": real_case(path)}])
     bus_publish("spaces", {"changed": key})
     give key
 
@@ -279,6 +301,7 @@ agent Session
     require exec
     require time
     require file.read
+    require file.write("~/.atril/*")
     let p be proc_spawn(cmd, args, {"pty": true, "cols": cols, "rows": rows, "cwd": cwd})
     let inbox be bus_subscribe("in." + sid)
     let meta be {"id": sid, "name": name, "cmd": cmd, "args": args, "cwd": cwd, "space": space_key(cwd), "kind": kind_of(cmd),
@@ -345,7 +368,7 @@ agent Session
                             let root be git_root(folder)
                             let target be root
                             when target == nothing
-                                each sp in state_get("spaces", [])
+                                each sp in load_spaces()
                                     when sp["key"] == space_key(folder)
                                         set target to sp["path"]
                             when target != nothing and space_key(target) != meta["space"]
@@ -394,6 +417,328 @@ agent Session
         publish_meta(meta)
         bus_publish("out." + sid, {"t": "exit", "code": nothing})
         proc_close(p)
+
+-- ---- other machines, through SSH ----------------------------------------------------------------
+--
+-- A machine is "user@host" and a port. Atril has its own key (~/.atril/ssh/id_ed25519) and its own
+-- known_hosts. The first connection may ask for the password once: it only adds Atril's public key
+-- to that machine's ~/.ssh/authorized_keys, and is never kept. From then on a Link agent per machine
+-- keeps a tunnel open (ssh -N -L <local port>:127.0.0.1:7171), checks it every 20 s and opens it
+-- again when it drops, waiting a little longer each time (up to 30 s). The window talks to the
+-- remote daemons through this one: /api/m/<machine>/… goes through the tunnel with that daemon's key.
+--
+--   state link:<id>  {status: connecting | up | down, error, machine, since}
+--   state mkey:<id>  the remote daemon's key, read through SSH each time the link opens
+--   bus   machines   a machine was added or removed, or its link changed
+--   bus   link.<id>  {t: "stop"} (forget it) | {t: "kick"} (reconnect now)
+
+let SSH_DIR be replace(HOME, "\\", "/") + "/.atril/ssh"
+let SSH_KEY be SSH_DIR + "/id_ed25519"
+let SSH_KNOWN be SSH_DIR + "/known_hosts"
+-- on the other machine: its daemon up (atr up starts it when it is not), then its key
+let REMOTE_UP be "\"$HOME/.local/bin/atr\" up >/dev/null 2>&1; cat \"$HOME/.atril/daemon.json\""
+
+-- Windows has OpenSSH in System32; elsewhere ssh is on the PATH
+task ssh_tool(name)
+    when platform()["os"] == "windows"
+        let sys be "C:\\Windows\\System32\\OpenSSH\\" + name + ".exe"
+        when file_info(sys)["exists"]
+            give sys
+    give name
+
+task load_machines()
+    try
+        let list be json_decode(read_file("~/.atril/machines.json"))
+        give when type_of(list) == "list" then list otherwise []
+    recover e
+        give []
+
+task save_machines(list)
+    write_file("~/.atril/machines.json", json_encode(list))
+
+task machine_by_id(mid)
+    each m in load_machines()
+        when m["id"] == mid
+            give m
+    give nothing
+
+-- every connection to m: Atril's key and known hosts, never a prompt, a keepalive that notices a dead line
+task ssh_opts(m)
+    give ["-p", text(m["port"]), "-i", SSH_KEY, "-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile=" + SSH_KNOWN,
+        "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]
+
+-- Atril's key pair, made the first time; gives the public half
+task ensure_key()
+    when not file_info(SSH_KEY)["exists"]
+        write_file("~/.atril/ssh/README", "Atril's own SSH key. Its public half is in the authorized_keys of the machines you connected.\n")
+        run(ssh_tool("ssh-keygen"), ["-q", "-t", "ed25519", "-N", "", "-C", "atril@" + MACHINE, "-f", SSH_KEY], 30)
+    give trim(read_file(SSH_KEY + ".pub"))
+
+-- the line a machine runs to accept Atril's key (once, idempotent)
+task add_key_cmd(pub)
+    give "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; grep -qxF '" + pub + "' ~/.ssh/authorized_keys || echo '" + pub + "' >> ~/.ssh/authorized_keys; echo ATRIL-KEY-OK"
+
+task try_batch(m)
+    try
+        let r be run(ssh_tool("ssh"), ssh_opts(m) + [m["target"], "echo atril-ok"], 25)
+        give contains(r["stdout"], "atril-ok")
+    recover e
+        give false
+
+-- the other daemon running, and its key: {ok, conf} or {ok: false, error}
+task remote_up(m)
+    try
+        let r be run(ssh_tool("ssh"), ssh_opts(m) + [m["target"], REMOTE_UP], 40)
+        let conf be json_decode(trim(r["stdout"]), nothing)
+        when r["exit_code"] != 0 or conf == nothing or type_of(conf) != "map" or get(conf, "token") == nothing
+            give {"ok": false, "error": trim(r["stderr"] + " " + r["stdout"])}
+        give {"ok": true, "conf": conf}
+    recover e
+        give {"ok": false, "error": text(e)}
+
+task answers(port, key)
+    try
+        let r be http_get("http://127.0.0.1:" + text(port) + "/api/info", {"Authorization": "Bearer " + key}, nothing, 5)
+        give ok of r
+    recover e
+        give false
+
+task set_link(mid, status, err, remote_machine)
+    let prev be state_get("link:" + mid, {})
+    let rm be when remote_machine != nothing then remote_machine otherwise get(prev, "machine")
+    state_set("link:" + mid, {"status": status, "error": err, "machine": rm, "since": now()})
+    bus_publish("machines", {"id": mid})
+
+task machines_view()
+    let out be []
+    each m in load_machines()
+        let l be state_get("link:" + m["id"], {})
+        set out to out + [{"id": m["id"], "name": m["name"], "target": m["target"], "port": m["port"],
+            "status": get(l, "status", "connecting"), "error": get(l, "error"), "machine": get(l, "machine"), "since": get(l, "since")}]
+    give out
+
+-- where a remote daemon answers here, and its key; nothing while its link is not up
+task remote_of(mid)
+    let m be machine_by_id(mid)
+    let key be state_get("mkey:" + mid)
+    when m == nothing or key == nothing or get(state_get("link:" + mid, {}), "status") != "up"
+        give nothing
+    give {"base": "http://127.0.0.1:" + text(m["local_port"]), "ws": "ws://127.0.0.1:" + text(m["local_port"]), "key": key}
+
+-- one machine's link: open it, hold it, open it again, until the machine is forgotten
+agent Link
+    require exec
+    require time
+    require file.read
+    require net("127.0.0.1")
+    let inbox be bus_subscribe("link." + mid)
+    let alive be true
+    let backoff be 1
+    while alive
+        try
+            let m be machine_by_id(mid)
+            when m == nothing
+                set alive to false
+            otherwise
+                set_link(mid, "connecting", nothing, nothing)
+                let up be remote_up(m)
+                when not up["ok"]
+                    set_link(mid, "down", up["error"], nothing)
+                otherwise
+                    let key be up["conf"]["token"]
+                    state_set("mkey:" + mid, key)
+                    let lp be m["local_port"]
+                    let t be proc_spawn(ssh_tool("ssh"), ssh_opts(m) + ["-N", "-o", "ExitOnForwardFailure=yes", "-L", text(lp) + ":127.0.0.1:7171", m["target"]], {"stderr": "merge"})
+                    let ready be false
+                    let tries be 0
+                    while not ready and tries < 30 and proc_status(t) == "running"
+                        sleep(0.5)
+                        set ready to answers(lp, key)
+                        set tries to tries + 1
+                    when not ready
+                        let said be ""
+                        let ev be proc_recv(t, 0.2)
+                        while ev != nothing and ev["type"] != "exit"
+                            set said to said + ev["data"] + " "
+                            set ev to proc_recv(t, 0.2)
+                        proc_close(t)
+                        set_link(mid, "down", "the tunnel did not open: " + trim(said), nothing)
+                    otherwise
+                        set_link(mid, "up", nothing, get(up["conf"], "machine"))
+                        set backoff to 1
+                        let fails be 0
+                        let holding be true
+                        while holding
+                            let ev be select({"t": t, "in": inbox}, 20)
+                            when ev == nothing
+                                when answers(lp, key)
+                                    set fails to 0
+                                otherwise
+                                    set fails to fails + 1
+                                    when fails >= 2
+                                        set holding to false
+                            otherwise when ev["name"] == "t"
+                                when ev["type"] == "exit"
+                                    set holding to false
+                            otherwise when ev["data"]["t"] == "stop"
+                                set holding to false
+                                set alive to false
+                            otherwise when ev["data"]["t"] == "kick"
+                                set holding to false
+                        proc_close(t)
+                        when alive
+                            set_link(mid, "down", "the connection dropped; opening it again", nothing)
+        recover err
+            set_link(mid, "down", text(err), nothing)
+        when alive
+            -- wait before trying again, but a "forget" or "reconnect now" cuts the wait short
+            let ev be bus_recv(inbox, backoff)
+            when ev != nothing and ev["data"]["t"] == "stop"
+                set alive to false
+            set backoff to when backoff >= 16 then 30 otherwise backoff * 2
+    state_delete("link:" + mid)
+    state_delete("mkey:" + mid)
+
+task start_links()
+    each m in load_machines()
+        spawn Link with mid = m["id"]
+
+task tell(sock, msg)
+    ws_send(sock, json_encode({"t": "step", "msg": msg}))
+
+-- the password, once, to leave Atril's key on the machine: ssh in a pseudo-terminal, the window types
+-- the password when ssh asks for it. Gives nothing when the key was added, else what went wrong
+task password_once(sock, m, pub)
+    let p be proc_spawn(ssh_tool("ssh"), ["-p", text(m["port"]), "-o", "PubkeyAuthentication=no",
+        "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "NumberOfPasswordPrompts=3",
+        "-o", "UserKnownHostsFile=" + SSH_KNOWN, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
+        m["target"], add_key_cmd(pub)], {"pty": true, "cols": 200, "rows": 20})
+    let seen be ""
+    let attempts be 0
+    let deadline be now() + 180
+    while now() < deadline
+        let ev be select({"p": p, "ui": sock}, 5)
+        when ev != nothing and ev["name"] == "p"
+            when ev["type"] == "exit"
+                proc_close(p)
+                when contains(seen, "ATRIL-KEY-OK")
+                    give nothing
+                when contains(seen, "Permission denied")
+                    give "Contraseña incorrecta, o esa máquina no acepta contraseñas."
+                give "No se pudo entrar: " + slice(trim(regex_replace(seen, "\\s+", " ")), -300)
+            set seen to slice(seen + strip_ansi(ev["data"]), -4000)
+            when contains(seen, "ATRIL-KEY-OK")
+                proc_close(p)
+                give nothing
+            -- a prompt after an answer means the answer was wrong (ssh may also move on to another method
+            -- that asks the same): ask again, three times at most
+            when regex_find_all(seen, "[Pp]assword[^\r\n]*: *$")
+                when attempts >= 3
+                    proc_close(p)
+                    give "Contraseña incorrecta (3 intentos)."
+                set seen to ""
+                set attempts to attempts + 1
+                let msg be when attempts == 1 then "Contraseña de " + m["target"] otherwise "No era esa. Contraseña de " + m["target"] + " (intento " + text(attempts) + " de 3)"
+                ws_send(sock, json_encode({"t": "ask", "what": "password", "msg": msg, "retry": attempts > 1}))
+        otherwise when ev != nothing and ev["name"] == "ui"
+            when ev["type"] == "close"
+                proc_close(p)
+                give "Cancelado."
+            let msg be json_decode(ev["data"], nothing)
+            when msg != nothing and type_of(msg) == "map" and type_of(get(msg, "password")) == "text"
+                set seen to ""
+                proc_send(p, msg["password"] + "\r")
+                set msg to nothing
+                tell(sock, "Probando la contraseña…")
+    proc_close(p)
+    give "Tiempo agotado esperando la contraseña."
+
+-- "Conectar máquina": from user@host to a link that stays open. Gives {ok, id, name} or {error}
+task connect_flow(sock, req)
+    let target be trim(text(get(req, "target", "")))
+    let port be int(get(req, "port", 22), fallback = 22)
+    when not regex_find_all(target, "^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$")
+        give {"error": "Escribí usuario@ip, por ejemplo root@203.0.113.7"}
+    when port < 1 or port > 65535
+        give {"error": "El puerto va de 1 a 65535 (SSH suele ser 22)."}
+    each known in load_machines()
+        when known["target"] == target and known["port"] == port
+            give {"error": "Esa máquina ya está conectada.", "id": known["id"]}
+    let m be {"id": "", "target": target, "port": port}
+    tell(sock, "Preparando la llave de Atril en esta computadora")
+    let pub be ensure_key()
+    tell(sock, "Probando entrar sin contraseña")
+    when not try_batch(m)
+        -- your own SSH setup (a key, an agent) may already open the door: then it leaves Atril's key
+        let own be nothing
+        try
+            set own to run(ssh_tool("ssh"), ["-p", text(port), "-o", "BatchMode=yes", "-o", "UserKnownHostsFile=" + SSH_KNOWN,
+                "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", target, add_key_cmd(pub)], 30)
+        recover e
+            set own to {"stdout": "", "stderr": text(e)}
+        when not contains(own["stdout"], "ATRIL-KEY-OK")
+            when regex_find_all(own["stderr"], "(Could not resolve|Connection refused|timed out|No route to host)")
+                give {"error": "No llego a " + target + ": " + trim(own["stderr"])}
+            tell(sock, "Esta máquina pide contraseña: la uso una sola vez, para dejar la llave de Atril. No se guarda.")
+            let res be password_once(sock, m, pub)
+            when res != nothing
+                give {"error": res}
+        tell(sock, "Probando la llave de Atril")
+        when not try_batch(m)
+            give {"error": "La llave quedó en la máquina pero no permite entrar. ¿Ese servidor acepta llaves (PubkeyAuthentication yes)?"}
+    tell(sock, "Buscando Atril en esa máquina")
+    let up be remote_up(m)
+    when not up["ok"]
+        give {"error": "Entré, pero Atril no está instalado ahí o no arranca. Instalalo con install.sh y volvé a conectar. (" + slice(text(up["error"]), 0, 300) + ")"}
+    let list be load_machines()
+    let used be apply(list, (x) => x["local_port"])
+    let lp be 7301
+    while lp in used
+        set lp to lp + 1
+    let mid be "m" + text(lp - 7300)
+    let name be trim(text(get(req, "name", "")))
+    when name == ""
+        set name to text(get(up["conf"], "machine", regex_replace(target, "^.*@", "")))
+    save_machines(list + [{"id": mid, "name": name, "target": target, "port": port, "local_port": lp}])
+    spawn Link with mid = mid
+    bus_publish("machines", {"id": mid})
+    give {"ok": true, "id": mid, "name": name}
+
+-- a window's socket to a remote daemon's socket, both ways, until either closes
+task pipe_ws(sock, url, key)
+    let up be nothing
+    try
+        set up to ws_connect(url, {"Authorization": "Bearer " + key}, {"timeout": 10})
+    recover e
+        give nothing
+    while true
+        let ev be select({"ui": sock, "up": up}, 30)
+        when ev != nothing
+            when ev["type"] == "close"
+                when ev["name"] == "ui"
+                    ws_close(up)
+                give nothing
+            when ev["name"] == "ui"
+                ws_send(up, ev["data"])
+            otherwise
+                ws_send(sock, ev["data"])
+
+-- a request of the window to a remote daemon, answered as that daemon answered it
+task proxy_http(mid, method, rest, q, body)
+    let r be remote_of(mid)
+    when r == nothing
+        give fail(503, "that machine is not connected right now")
+    let h be {"Authorization": "Bearer " + r["key"], "Content-Type": "application/json"}
+    let url be r["base"] + "/api/" + rest
+    let res be nothing
+    when method == "GET"
+        set res to http_get(url, h, q, 30)
+    otherwise when method == "POST"
+        set res to http_post(url, body, h, 30)
+    otherwise
+        set res to http_delete(url, h, 30)
+    give respond(body of res, "application/json", status of res)
 
 -- what a window may send to a session, and nothing else: keys, or a new size
 task clean_input(m)
@@ -512,9 +857,56 @@ serve on 7171
         each s in sessions()
             when get(s, "space") == key and s["status"] == "running"
                 give fail(400, "something is still running in that space")
-        state_set("spaces", where(state_get("spaces", []), (sp) => sp["key"] != key))
+        save_spaces(where(load_spaces(), (sp) => sp["key"] != key))
         bus_publish("spaces", {"changed": key})
         give {"ok": true}
+
+    -- ---- other machines
+    route "GET /api/machines" requires auth
+        give machines_view()
+
+    route "GET /api/machines/connect" requires auth
+        timeout none
+        socket
+            let first be ws_recv(socket, 120)
+            let req be when first == nothing or first["type"] != "text" then nothing otherwise json_decode(first["data"], nothing)
+            let result be when type_of(req) == "map" then connect_flow(socket, req) otherwise {"error": "nothing to connect"}
+            ws_send(socket, json_encode({"t": "done", "result": result}))
+
+    route "POST /api/machines/:mid/forget" requires auth
+        bus_publish("link." + params.mid, {"t": "stop"})
+        save_machines(where(load_machines(), (m) => m["id"] != params.mid))
+        state_delete("link:" + params.mid)
+        state_delete("mkey:" + params.mid)
+        bus_publish("machines", {"id": params.mid})
+        give {"ok": true}
+
+    route "POST /api/machines/:mid/reconnect" requires auth
+        bus_publish("link." + params.mid, {"t": "kick"})
+        give {"ok": true}
+
+    route "GET /api/m/:mid/events" requires auth
+        timeout none
+        socket
+            let r be remote_of(params.mid)
+            when r != nothing
+                pipe_ws(socket, r["ws"] + "/api/events", r["key"])
+
+    route "GET /api/m/:mid/sessions/:ref/attach" requires auth
+        timeout none
+        socket
+            let r be remote_of(params.mid)
+            when r != nothing
+                pipe_ws(socket, r["ws"] + "/api/sessions/" + params.ref + "/attach", r["key"])
+
+    route "GET /api/m/:mid/*rest" requires auth
+        give proxy_http(params.mid, "GET", params.rest, query, nothing)
+
+    route "POST /api/m/:mid/*rest" requires auth
+        give proxy_http(params.mid, "POST", params.rest, nothing, read_body())
+
+    route "DELETE /api/m/:mid/*rest" requires auth
+        give proxy_http(params.mid, "DELETE", params.rest, nothing, nothing)
 
     route "GET /api/info" requires auth
         give {"machine": MACHINE, "os": platform()["os"], "version": "0.1.0"}
@@ -576,13 +968,15 @@ serve on 7171
     route "GET /api/events" requires auth
         timeout none
         socket
-            let sub be bus_subscribe(["sessions", "ui", "spaces"])
-            ws_send(socket, json_encode({"t": "all", "sessions": sessions(), "spaces": spaces_view()}))
+            let sub be bus_subscribe(["sessions", "ui", "spaces", "machines"])
+            ws_send(socket, json_encode({"t": "all", "sessions": sessions(), "spaces": spaces_view(), "machines": machines_view()}))
             while true
                 let ev be select({"ui": socket, "bus": sub}, 30)
                 when ev != nothing and ev["name"] == "ui"
                     when ev["type"] == "close"
                         stop
+                otherwise when ev != nothing and ev["topic"] == "machines"
+                    ws_send(socket, json_encode({"t": "machines", "machines": machines_view()}))
                 otherwise when ev != nothing and ev["topic"] == "spaces"
                     ws_send(socket, json_encode({"t": "spaces", "spaces": spaces_view()}))
                 otherwise when ev != nothing and ev["topic"] == "ui"
@@ -627,6 +1021,9 @@ serve on 7171
                             ws_send(socket, json_encode({"t": "o", "d": m["d"]}))
                     otherwise when m["t"] == "exit"
                         ws_send(socket, json_encode(m))
+
+-- the links to the other machines open again with the daemon
+cron_after(1, start_links)
 
 print("atril: listening on http://127.0.0.1:" + text(PORT) + " — key in ~/.atril/daemon.json")
 when not BACKGROUND

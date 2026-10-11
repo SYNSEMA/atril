@@ -113,6 +113,34 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #newtitle { width: 240px; }
 .tab input { width: 160px; margin: 0; padding: 1px 6px; }
 
+/* machines */
+#spaces li.mhead { display: flex; gap: 8px; align-items: center; padding: 10px 8px 4px; cursor: default; color: var(--muted); font-size: 12px; font-weight: 700; }
+#spaces li.mhead:hover { background: none; }
+#spaces li.mhead .mst { font-weight: 400; margin-left: auto; color: var(--dim); }
+#spaces li.mhead.down .mst { color: var(--warn); }
+#spaces li.mhead + li.mempty { color: var(--dim); font-size: 12px; padding: 2px 8px 6px 30px; cursor: default; display: block; }
+.add { text-align: left; padding: 6px 8px 2px; font-size: 13px; }
+.st.up { background: var(--ok); }
+.st.connecting { background: var(--busy); animation: pulse 1s infinite alternate; }
+.st.down { background: var(--warn); }
+
+/* connect a machine */
+#conn { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; z-index: 10; }
+#conn .wide { width: min(560px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; }
+.cform { display: grid; grid-template-columns: 1fr 90px; gap: 10px 12px; padding: 4px 14px 12px; }
+.cform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.cform label:nth-child(3) { grid-column: 1 / 3; }
+.cform input, #cpass input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font: inherit; outline: none; }
+.cform input:focus, #cpass input:focus { border-color: var(--accent); }
+#clog { padding: 0 14px; max-height: 30vh; overflow-y: auto; font-size: 13px; }
+#clog li { padding: 3px 0; color: var(--muted); }
+#clog li.ok { color: var(--ok); }
+#clog li.err { color: var(--warn); }
+#cpass { display: flex; gap: 8px; align-items: center; padding: 10px 14px; }
+#cpass label { font-size: 13px; color: var(--text); }
+#cpass input { flex: 1; }
+#cpass button { padding: 7px 12px; border-radius: 4px; background: var(--accent); color: #0b0b10; font-weight: 700; }
+
 #ctx { position: fixed; z-index: 11; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; min-width: 170px; padding: 4px 0; }
 #ctx button { text-align: left; padding: 6px 12px; }
 #ctx button:hover { background: var(--sel); }

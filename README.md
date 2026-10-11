@@ -21,7 +21,8 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 - [x] Installers: Windows (Start menu, PATH, daemon at sign-in) and Linux/macOS (systemd user service)
 - [ ] Installable PWA, `.msi`/`.dmg`, signed binaries, smaller executables
 - [ ] `atr attach` inside your current terminal
-- [ ] Other machines through an end-to-end encrypted relay (v0.2)
+- [x] Other machines through SSH: `user@host`, the password once, a link that reopens by itself
+- [ ] Other machines without SSH, through an end-to-end encrypted relay (v0.3)
 - [ ] Phone: key bar is there; push when an agent needs you (v0.3)
 
 ## Install
@@ -56,8 +57,13 @@ atr kill review                # end the program
 atr down                       # stop the daemon and every session
 ```
 
-**On a server** there is no window: run your agents there with `atr run`, and open the window from
-your computer through SSH (the daemon only listens on the server's 127.0.0.1):
+**A server, in the same window**: install Atril there (`./install.sh`), then on your computer
+**+ conectar máquina** → `user@ip`. If it asks for the password, it is used once to leave Atril's
+own SSH key there and is not kept. The server shows up in the sidebar with its spaces and agents,
+and the link stays open and reopens by itself (see [SECURITY.md](SECURITY.md)).
+
+Without a window on your side, the old way still works (the daemon only listens on the server's
+127.0.0.1):
 
 ```sh
 ssh -L 7172:127.0.0.1:7171 my-server

@@ -25,9 +25,30 @@ Known gaps, in order:
 - Any process running **as you** can read the key. Atril does not defend you from your own user;
   nothing on a desktop OS does.
 
-## v0.2 — other machines (designed, not built)
+## Other machines through SSH (built)
 
-No machine ever opens a port. Each daemon keeps **one outbound** encrypted connection to a relay
+**Conectar máquina** asks for `user@host`. Nothing new listens anywhere: the other machine's daemon
+still listens on its own 127.0.0.1, and this computer reaches it through an SSH tunnel.
+
+- **Atril has its own key** (`~/.atril/ssh/id_ed25519`, made the first time) and its own
+  `known_hosts`. A machine's host key is accepted the first time and pinned: if it changes, Atril
+  refuses to connect.
+- **The password is used once.** When the machine asks for one, the window sends it to this daemon,
+  which types it into `ssh` (in a pseudo-terminal) to add Atril's public key to that machine's
+  `~/.ssh/authorized_keys`, and keeps it nowhere: not on disk, not in a log, not in the window.
+- **The link stays open**: one `ssh -N -L` per machine, with keepalives every 15 s. This daemon checks
+  it every 20 s and opens it again when it drops (a reboot of the server, a laptop that slept), waiting
+  longer each time up to 30 s. Tested: a server restart comes back in ~4 s; a frozen server is noticed
+  in under a minute and comes back seconds after it answers again.
+- **The other daemon's key** is read through SSH each time the link opens and kept in memory only.
+- **Whoever can open the window of this computer can use the connected machines.** That is the same
+  key as before (127.0.0.1, the token in `~/.atril/daemon.json`). Disconnecting a machine forgets it
+  here; to cut Atril out of it entirely, remove the `atril@…` line from its `authorized_keys`.
+
+## v0.3 — other machines without SSH (designed, not built)
+
+For machines you cannot reach by SSH (a computer behind a home router, a phone). No machine ever
+opens a port. Each daemon keeps **one outbound** encrypted connection to a relay
 (the same design as `syn tunnel`), so a laptop behind NAT, a VPS and a phone meet without inbound
 firewall rules. Knowing an IP gives an attacker nothing to connect to.
 

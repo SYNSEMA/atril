@@ -14,8 +14,9 @@
   <aside id="side">
     <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
 
-    <div class="label">spaces <span id="machine" class="muted"></span></div>
+    <div class="label">spaces</div>
     <ul id="spaces"></ul>
+    <button id="connect" class="link add" title="Ver otra computadora o un servidor acá, por SSH">+ conectar máquina</button>
 
     <div class="row">
       <button id="new" class="link" title="Nuevo space: una carpeta de trabajo">new</button>
@@ -53,7 +54,7 @@
 
 <div id="picker" hidden>
   <div class="box wide">
-    <div class="ph">Nuevo space <span class="muted">· la carpeta de un proyecto</span></div>
+    <div class="ph">Nuevo space <span id="pwhere" class="muted">· la carpeta de un proyecto</span></div>
     <input id="pq" placeholder="filtrá, o pegá una ruta y Enter…" autocomplete="off" spellcheck="false">
     <div id="pcrumb"></div>
     <ul id="plist"></ul>
@@ -69,6 +70,23 @@
   <button data-a="remove">Quitar de la lista</button>
   <button data-a="newtab" data-for="space">Nueva terminal acá</button>
   <button data-a="forget" data-for="space">Olvidar este space</button>
+  <button data-a="mnew" data-for="machine">Nuevo space en esta máquina</button>
+  <button data-a="reconnect" data-for="machine">Reconectar ahora</button>
+  <button data-a="unlink" data-for="machine" class="danger">Desconectar y olvidar</button>
+</div>
+
+<div id="conn" hidden>
+  <div class="box wide">
+    <div class="ph">Conectar máquina <span class="muted">· un servidor o una computadora con SSH</span></div>
+    <div class="cform">
+      <label>Usuario y dirección<input id="ctarget" placeholder="root@203.0.113.7" autocomplete="off" spellcheck="false"></label>
+      <label class="small-in">Puerto<input id="cport" value="22" inputmode="numeric" autocomplete="off"></label>
+      <label>Nombre <span class="muted">(opcional)</span><input id="cname" placeholder="vps" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <ul id="clog"></ul>
+    <form id="cpass" hidden><label id="cpasslabel">Contraseña</label><input id="cpw" type="password" autocomplete="off"><button class="primary">Enviar</button></form>
+    <div class="pfoot"><span id="cmsg" class="muted">La contraseña se usa una sola vez para dejar la llave de Atril. No se guarda.</span><button id="ccancel">Cerrar</button><button id="cgo" class="primary">Conectar</button></div>
+  </div>
 </div>
 
 <script src="vendor/xterm.min.js"></script>
