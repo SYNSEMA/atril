@@ -33,8 +33,9 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-It installs `atr.exe`, `atril.exe` and `atrild.exe` in `%LOCALAPPDATA%\Atril`, puts `atr` on your
-PATH, adds **Atril** to the Start menu and starts the daemon when you sign in. No admin.
+It installs `atr.exe` (the command line) and `atrild.exe` (the daemon, which is also the Start menu
+entry) in `%LOCALAPPDATA%\Atril`, puts `atr` on your PATH, adds **Atril** to the Start menu and
+starts the daemon when you sign in. No admin.
 `install.ps1 -Uninstall` removes it.
 
 **Linux / macOS / a server**:
@@ -47,6 +48,7 @@ PATH, adds **Atril** to the Start menu and starts the daemon when you sign in. N
 
 ```sh
 atr run --name review claude   # a session running Claude Code
+atr name 2 "migración de la base"   # a title for a session, to remember it and find it
 atr run                        # your shell
 atr ls                         # every session: name, pid, state
 atr open review                # the window, on that tab (or Atril from the Start menu)
@@ -83,10 +85,15 @@ to it; on attach the session sends a snapshot and the window drops the output th
 already contains (by sequence number). If the daemon stops, its sessions stop with it, as with tmux.
 
 ```
-daemon/atrild.syn   the daemon
-daemon/ui/          the window
-cli/atr.syn         the CLI (cli/atr, cli/atr.cmd launch it)
+src/atrild.syn      the daemon (and the Start menu entry)
+src/atr.syn         the CLI (cli/atr, cli/atr.cmd launch it from the source)
+src/window.syn      opens the window; shared by both
+src/ui/             the window
 ```
+
+In the window a **space** is a folder (with its git branch), its **tabs** are the sessions that run
+there (+ asks for an optional title; double-click a tab to change it), and **agents** lists only
+agents, from every space. **new** opens a picker with your recent repositories and a folder browser.
 
 ## License
 

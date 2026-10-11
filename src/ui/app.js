@@ -167,21 +167,25 @@ function selectSpace(key) {
 
 const tabsOf = (key) => inSpace(key).filter((s) => !hidden.has(s.id));
 
+let editing = false;          // a tab title being typed: the bar must not be redrawn under it
 function renderTabs() {
+  if (editing) return;
   const bar = $("#tablist");
   bar.innerHTML = "";
   const list = tabsOf(current);
   list.forEach((s, i) => {
     const el = document.createElement("div");
     el.className = "tab" + (s.id === lastTab[current] ? " on" : "");
+    el.dataset.id = s.id;
+    el.ondblclick = (e) => { if (e.target !== el.querySelector(".x")) renameTab(s.id); };
     const st = statusOf(s);
     el.innerHTML = `<span class="st ${st === "idle" && isAgent(s) ? "bell" : st}"></span><span class="t"></span><button class="x"></button>`;
     el.querySelector(".t").textContent = tabName(s, i);
     const x = el.querySelector(".x");
     x.textContent = "×";
     x.title = s.status === "running" ? "Cerrar pestaña (el programa sigue: está en agents / find)" : "Cerrar y olvidar";
-    el.title = `${s.name} · ${label(s)}`;
-    el.onclick = (e) => { if (e.target !== x) focusTab(s.id); };
+    el.title = `${s.name} · ${label(s)} · doble clic para ponerle título`;
+    el.onclick = (e) => { if (e.target !== x && e.target.tagName !== "INPUT") focusTab(s.id); };
     x.onclick = () => closeTab(s.id);
     el.onauxclick = (e) => { if (e.button === 1) closeTab(s.id); };
     el.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.id, e.clientX, e.clientY); };
@@ -252,16 +256,163 @@ async function newTab(body = {}) {
   reveal(s.id);
 }
 
-async function newSpace() {
-  const path = prompt("Carpeta del nuevo space (por ejemplo C:\\Users\\joell\\desktop\\rapibase):", "");
-  if (!path) return;
+// ---- titles: + asks for one (Enter alone keeps the number); a double click on a tab changes it
+function askTitle() {
+  const box = $("#newtitle");
+  box.value = "";
+  box.hidden = false;
+  $("#plus").hidden = true;
+  box.focus();
+}
+function endAsk() { $("#newtitle").hidden = true; $("#plus").hidden = false; }
+$("#newtitle").onkeydown = (e) => {
+  if (e.key === "Enter") { const name = e.target.value.trim(); endAsk(); newTab(name ? { name } : {}).catch((err) => alert(err.message)); }
+  else if (e.key === "Escape") { endAsk(); const t = terms.get(lastTab[current]); if (t) t.term.focus(); }
+};
+$("#newtitle").onblur = endAsk;
+
+function renameTab(id) {
+  const el = document.querySelector(`.tab[data-id="${id}"] .t`);
+  const s = sessions.get(id);
+  if (!el || !s) return;
+  const input = document.createElement("input");
+  input.value = /^[a-z-]+-\d+$/.test(s.name) ? "" : s.name;
+  input.placeholder = "título";
+  input.maxLength = 80;
+  el.replaceWith(input);
+  input.focus();
+  editing = true;
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    editing = false;
+    const name = input.value.trim();
+    if (save && name && name !== s.name) {
+      try { await api("POST", `/api/sessions/${id}/rename`, { name }); } catch (err) { alert(err.message); }
+    }
+    renderTabs();
+    const t = terms.get(id);
+    if (t) t.term.focus();
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); e.stopPropagation(); };
+  input.onblur = () => finish(true);
+}
+
+// ---- new space: recent repositories first, then browse any folder
+const picker = { mode: "suggest", path: null, parent: null, branch: null, items: [], sel: 0 };
+const pathLike = (v) => /[\\/:]/.test(v);
+
+async function openPicker() {
+  $("#picker").hidden = false;
+  $("#pq").value = "";
+  $("#pmsg").textContent = "";
+  picker.sel = 0;
+  $("#pq").focus();
   try {
-    const { key } = await api("POST", "/api/spaces", { path: path.trim() });
+    const r = await api("GET", "/api/dirs/suggest");
+    picker.mode = "suggest";
+    picker.path = r.home;
+    picker.items = r.repos.map((x) => ({ ...x, kind: "repo" }));
+    picker.items.push({ kind: "browse", name: "Explorar carpetas…", path: r.home });
+    paintPicker();
+  } catch (e) { $("#pmsg").textContent = e.message; }
+}
+function closePicker() { $("#picker").hidden = true; const t = terms.get(lastTab[current]); if (t) t.term.focus(); }
+
+async function pickerGo(path) {
+  try {
+    const r = await api("GET", "/api/dirs?path=" + encodeURIComponent(path));
+    Object.assign(picker, { mode: "browse", path: r.path, parent: r.parent, branch: r.branch, sel: 0 });
+    picker.items = (r.parent ? [{ kind: "up", name: "..", path: r.parent }] : []).concat(r.dirs.map((x) => ({ ...x, kind: x.branch ? "repo" : "dir" })));
+    $("#pq").value = "";
+    $("#pmsg").textContent = "";
+    paintPicker();
+    $("#pq").focus();
+  } catch (e) { $("#pmsg").textContent = e.message; }
+}
+
+function pickerVisible() {
+  const q = $("#pq").value.trim().toLowerCase();
+  if (!q || pathLike(q)) return picker.items;
+  return picker.items.filter((x) => x.kind === "browse" || x.name.toLowerCase().includes(q));
+}
+
+function paintPicker() {
+  const crumb = $("#pcrumb");
+  if (picker.mode === "suggest") crumb.textContent = "Repos recientes · o explorá cualquier carpeta";
+  else {
+    crumb.textContent = picker.path;
+    if (picker.branch) { const b = document.createElement("span"); b.className = "branch"; b.textContent = "  ⎇ " + picker.branch; crumb.append(b); }
+  }
+  const ok = $("#pok");
+  ok.hidden = picker.mode !== "browse";
+  ok.textContent = "Abrir " + ((picker.path || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "acá");
+  const ul = $("#plist");
+  ul.innerHTML = "";
+  const list = pickerVisible();
+  picker.sel = Math.min(picker.sel, Math.max(0, list.length - 1));
+  list.forEach((x, i) => {
+    const li = document.createElement("li");
+    li.className = (i === picker.sel ? "sel " : "") + x.kind;
+    const icon = { repo: "⎇", dir: "▸", up: "↑", browse: "…" }[x.kind];
+    li.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="br"></span>`;
+    li.children[0].textContent = icon;
+    li.children[1].textContent = x.name;
+    li.children[2].textContent = x.branch || "";
+    if (picker.mode === "suggest" && x.kind === "repo") {
+      const pa = document.createElement("span");
+      pa.className = "pa";
+      pa.textContent = x.path;
+      li.append(pa);
+    }
+    if (picker.mode === "browse" && x.kind === "repo") {
+      const go = document.createElement("button");
+      go.className = "go";
+      go.textContent = "abrir";
+      go.title = "Abrir este proyecto como space";
+      go.onclick = (e) => { e.stopPropagation(); choose(x.path); };
+      li.children[2].append(go);
+    }
+    li.onclick = () => { picker.sel = i; activate(x); };
+    ul.append(li);
+  });
+  const cur = ul.children[picker.sel];
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+// a repository from the suggestions opens; a folder while browsing is entered
+function activate(x) {
+  if (!x) return;
+  if (picker.mode === "suggest" && x.kind === "repo") choose(x.path);
+  else pickerGo(x.path);
+}
+
+async function choose(path) {
+  try {
+    const { key } = await api("POST", "/api/spaces", { path });
+    $("#picker").hidden = true;
     current = key;
     store.set("space", key);
-    await newTab({ cwd: path.trim() });
-  } catch (e) { alert(e.message); }
+    await newTab({ cwd: path });
+  } catch (e) { $("#pmsg").textContent = e.message; }
 }
+
+$("#pq").oninput = () => { picker.sel = 0; paintPicker(); };
+$("#pq").onkeydown = (e) => {
+  const list = pickerVisible();
+  const v = $("#pq").value.trim();
+  if (e.key === "ArrowDown") { picker.sel = Math.min(picker.sel + 1, list.length - 1); paintPicker(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { picker.sel = Math.max(picker.sel - 1, 0); paintPicker(); e.preventDefault(); }
+  else if (e.key === "Enter" && e.ctrlKey && picker.mode === "browse") choose(picker.path);
+  else if (e.key === "Enter" && pathLike(v)) pickerGo(v);
+  else if (e.key === "Enter") activate(list[picker.sel]);
+  else if (e.key === "Backspace" && !v && picker.mode === "browse" && picker.parent) { pickerGo(picker.parent); e.preventDefault(); }
+  else if (e.key === "Escape") closePicker();
+};
+$("#pok").onclick = () => choose(picker.path);
+$("#pcancel").onclick = closePicker;
+$("#picker").onclick = (e) => { if (e.target.id === "picker") closePicker(); };
 
 // the same program again, in the same folder and with the same name
 async function restart(id) {
@@ -420,9 +571,10 @@ $("#ctx").onclick = async (e) => {
       if (current === ctxSpace.key) current = null;
       return;
     }
-    if (a === "newtab") { current = ctxSpace.key; return newTab(); }
+    if (a === "newtab") { current = ctxSpace.key; store.set("space", current); renderSide(); return askTitle(); }
     const s = sessions.get(ctxId);
     if (a === "open") reveal(ctxId);
+    if (a === "rename") { reveal(ctxId); setTimeout(() => renameTab(ctxId), 50); }
     if (a === "kill" && confirm(`¿Matar ${s.name} (pid ${s.pid})? El programa se cierra.`)) await api("POST", `/api/sessions/${ctxId}/kill`);
     if (a === "restart") await restart(ctxId);
     if (a === "remove") closeTab(ctxId);
@@ -433,7 +585,7 @@ $("#ctx").onclick = async (e) => {
 function shortcuts(e) {
   if (e.type !== "keydown") return true;
   if (e.ctrlKey && e.shiftKey && e.code === "KeyK") { openPalette(); return false; }
-  if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { newTab(); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { askTitle(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (lastTab[current]) closeTab(lastTab[current]); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
   if (e.ctrlKey && e.code === "Tab") {
@@ -465,8 +617,8 @@ $("#collapse").onclick = () => setSide(false);
 $("#expand").onclick = () => setSide(true);
 setSide(store.get("side", true));
 
-$("#plus").onclick = () => newTab();
-$("#new").onclick = newSpace;
+$("#plus").onclick = askTitle;
+$("#new").onclick = openPicker;
 $("#find").onclick = openPalette;
 $("#menu").onclick = () => $("#side").classList.toggle("show");
 $("#stage").onclick = () => $("#side").classList.remove("show");

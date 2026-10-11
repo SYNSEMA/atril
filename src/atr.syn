@@ -1,13 +1,13 @@
 -- atr.syn — the Atril command line. It talks to the daemon of this machine and starts it when it is
--- not running. Installed, it is atr.exe (and atril.exe, the same without a console, for the Start
--- menu) next to atrild.exe. From the source, the launchers cli/atr.cmd and cli/atr set ATRIL_HOME
--- and the daemon runs as `synsema serve daemon/atrild.syn`.
+-- not running. Installed, it is atr.exe next to atrild.exe. From the source, the launchers
+-- cli/atr.cmd and cli/atr set ATRIL_HOME and the daemon runs as `synsema serve src/atrild.syn`.
 --
 --   atr open [session] [--new]     the window (starts the daemon if needed); with a session, on that tab.
 --                                  A window already open shows it instead, unless --new
 --   atr run [--name N] [--cwd D] [--open] [cmd args…]
 --                                  a new session (your shell without cmd); it outlives every window
 --   atr ls [--json]                the sessions of this machine
+--   atr name <session> <title…>    give a session a title: what you do there, to find it later
 --   atr kill <session>             end the program of a session (id, name or pid)
 --   atr rm <session>               forget a session that already ended
 --   atr url [session]              the address of the window with its key (for a browser elsewhere,
@@ -27,6 +27,8 @@ require exec("powershell")
 require exec("sh")
 require exec("open")
 require exec("xdg-open")
+
+use "./window.syn" as window
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
@@ -64,14 +66,15 @@ task up()
         give conf()
     let home be env("ATRIL_HOME", "")
     let exe be self_path()
-    -- from the source: the engine serves daemon/atrild.syn; installed: atrild next to this binary
-    let dir be home + "/daemon"
+    -- from the source: the engine serves src/atrild.syn; installed: atrild next to this binary.
+    -- --background: started from here, the daemon opens no window of its own
+    let dir be home + "/src"
     let cmd be exe
-    let cmd_args be ["serve", "atrild.syn"]
+    let cmd_args be ["serve", "atrild.syn", "--", "--background"]
     when home == ""
         set dir to regex_replace(replace(exe, "\\", "/"), "/[^/]*$", "")
         set cmd to dir + (when WIN then "/atrild.exe" otherwise "/atrild")
-        set cmd_args to []
+        set cmd_args to ["--background"]
     when WIN
         -- no -Redirect*: with it the daemon inherits this pipe and `run` would wait for it forever
         let q be (t) => "'" + replace(t, "'", "''") + "'"
@@ -123,18 +126,7 @@ task open_window(ref, fresh)
         say("  ssh -L 7172:127.0.0.1:7171 <this server>")
         say("  then open " + replace(url, ":7171/", ":7172/"))
         give nothing
-    when WIN
-        try
-            run("powershell", ["-NoProfile", "-Command", "Start-Process msedge -ArgumentList '--app=" + url + "'"])
-        recover e
-            run("powershell", ["-NoProfile", "-Command", "Start-Process '" + url + "'"])
-    otherwise when platform()["os"] == "macos"
-        try
-            run("open", ["-na", "Google Chrome", "--args", "--app=" + url])
-        recover e
-            run("open", [url])
-    otherwise
-        run("xdg-open", [url])
+    window.open_url(url)
 
 task ago(ts)
     let d be now() - ts
@@ -206,6 +198,11 @@ otherwise when cmd == "run" or cmd == "new"
     new_session(rest)
 otherwise when cmd == "ls" or cmd == "list"
     list(contains(rest, "--json"))
+otherwise when cmd == "name" or cmd == "rename"
+    when length(rest) < 2
+        fail("atr name <session> <title>")
+    let r be api("POST", "/api/sessions/" + rest[0] + "/rename", {"name": join(slice(rest, 1), " ")})
+    say(r["id"] + " is now \"" + r["name"] + "\"")
 otherwise when cmd == "kill"
     when length(rest) == 0
         fail("atr kill <session>")
@@ -231,4 +228,4 @@ otherwise when cmd == "down"
             set e to e
     say("atril stopped")
 otherwise
-    say("atr open [session] | url [session] | run [--name N] [--cwd D] [--open] [cmd args…] | ls [--json] | kill <s> | rm <s> | up | down")
+    say("atr open [session] | url [session] | name <s> <title> | run [--name N] [--cwd D] [--open] [cmd args…] | ls [--json] | kill <s> | rm <s> | up | down")

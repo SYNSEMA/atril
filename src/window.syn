@@ -1,0 +1,20 @@
+-- window.syn — opens Atril's window: an app window of Edge or Chrome when there is one, else the
+-- default browser. Shared by the daemon (which opens it when you start Atril) and the CLI (`atr open`).
+-- Needs exec("powershell") on Windows, exec("open") on macOS, exec("xdg-open") on Linux, declared
+-- by the program that uses it.
+
+export task open_url(url)
+    let os be platform()["os"]
+    let safe be replace(url, "'", "''")
+    when os == "windows"
+        try
+            run("powershell", ["-NoProfile", "-Command", "Start-Process msedge -ArgumentList '--app=" + safe + "'"])
+        recover e
+            run("powershell", ["-NoProfile", "-Command", "Start-Process '" + safe + "'"])
+    otherwise when os == "macos"
+        try
+            run("open", ["-na", "Google Chrome", "--args", "--app=" + url])
+        recover e
+            run("open", [url])
+    otherwise
+        run("xdg-open", [url])

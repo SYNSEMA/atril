@@ -31,8 +31,7 @@ command -v synsema >/dev/null 2>&1 || { echo "install.sh: needs the Synsema engi
 
 stop_atril
 mkdir -p "$BIN"
-( cd "$ROOT/daemon" && synsema build atrild.syn -o "$BIN/atrild" --serve )
-synsema build "$ROOT/cli/atr.syn" -o "$BIN/atr"
+( cd "$ROOT/src" && synsema build atrild.syn -o "$BIN/atrild" --serve && synsema build atr.syn -o "$BIN/atr" )
 
 if [ "$(uname)" = "Linux" ] && has_systemd; then
   mkdir -p "$(dirname "$UNIT")"
@@ -41,7 +40,7 @@ if [ "$(uname)" = "Linux" ] && has_systemd; then
 Description=Atril daemon: keeps your terminal sessions alive
 
 [Service]
-ExecStart=$BIN/atrild
+ExecStart=$BIN/atrild --background
 Restart=on-failure
 WorkingDirectory=%h
 

@@ -33,9 +33,10 @@ function Set-UserPath([string]$dir, [bool]$present) {
     if ($present) { $env:Path += ";$dir" }
 }
 
-function New-Shortcut([string]$path, [string]$target, [string]$description) {
+function New-Shortcut([string]$path, [string]$target, [string]$arguments, [string]$description) {
     $s = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
     $s.TargetPath = $target
+    $s.Arguments = $arguments
     $s.WorkingDirectory = $env:USERPROFILE
     $s.IconLocation = "$target,0"
     $s.Description = $description
@@ -51,20 +52,22 @@ if ($Uninstall) {
     exit 0
 }
 
-foreach ($f in "atr.exe", "atril.exe", "atrild.exe") {
+foreach ($f in "atr.exe", "atrild.exe") {
     if (-not (Test-Path (Join-Path $src $f))) { throw "missing dist\${f}: run .\build.ps1 first" }
 }
 
 Stop-Atril
 New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item (Join-Path $src "*.exe") $dest -Force
+Remove-Item (Join-Path $dest "atril.exe") -ErrorAction SilentlyContinue   # older installs had a third one
+Copy-Item (Join-Path $src "atr.exe"), (Join-Path $src "atrild.exe") $dest -Force
 Set-UserPath $dest $true
-New-Shortcut $menu (Join-Path $dest "atril.exe") "Your agents' terminals, alive on every machine"
-New-Shortcut $startup (Join-Path $dest "atrild.exe") "Atril daemon: keeps your sessions alive"
+# one program: from the Start menu it opens the window; at sign-in it only keeps the sessions
+New-Shortcut $menu (Join-Path $dest "atrild.exe") "" "Your agents' terminals, alive on every machine"
+New-Shortcut $startup (Join-Path $dest "atrild.exe") "--background" "Atril daemon: keeps your sessions alive"
 
 & (Join-Path $dest "atr.exe") up
 Write-Host ""
 Write-Host "Atril is installed in $dest"
 Write-Host "  - 'atr' works in any NEW terminal (atr run claude, atr ls, atr open)"
 Write-Host "  - Atril is in the Start menu, and its daemon starts when you sign in"
-if (-not $NoOpen) { & (Join-Path $dest "atril.exe") }
+if (-not $NoOpen) { Start-Process (Join-Path $dest "atrild.exe") }

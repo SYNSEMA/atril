@@ -1,4 +1,7 @@
--- atrild.syn — the Atril daemon: owns the terminals of this machine.
+-- atrild.syn — the Atril daemon: owns the terminals of this machine. It is also what the Start menu
+-- opens: started with no argument it opens the window too; when another daemon already answers, it
+-- only shows that one's window and ends before listening. `atrild --background` never opens a window
+-- (sign-in, `atr up`).
 --
 -- Every session is a Synsema agent that owns one pseudo-terminal. A window that attaches only
 -- subscribes to the session's output on the bus and publishes keys to it, so closing the window
@@ -30,12 +33,43 @@ require env("USERPROFILE")
 require env("HOME")
 require file.write("~/.atril/*")
 require file.read          -- a space's .git/HEAD, wherever the project lives (its shells can read it anyway)
+require net("127.0.0.1:7171")
+
+use "./window.syn" as window
 
 let PORT be 7171
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
 let MACHINE be env("COMPUTERNAME", env("HOSTNAME", "this computer"))
 let HOME be env("USERPROFILE", env("HOME", "."))
+
+let BACKGROUND be length(args()) > 0 and args()[0] == "--background"
+
+-- the daemon that already answers on this machine, with its key, or nothing
+task running_daemon()
+    try
+        let c be json_decode(read_file("~/.atril/daemon.json"))
+        let r be http_get("http://127.0.0.1:" + text(PORT) + "/api/info", {"Authorization": "Bearer " + c["token"]}, nothing, 2)
+        when ok of r
+            give c
+    recover e
+        give nothing
+    give nothing
+
+let OTHER be running_daemon()
+when OTHER != nothing
+    when not BACKGROUND
+        let h be {"Authorization": "Bearer " + OTHER["token"]}
+        let shown be false
+        try
+            set shown to (json of http_post("http://127.0.0.1:" + text(PORT) + "/api/show", {}, h, 3))["shown"]
+        recover e
+            set shown to false
+        when not shown
+            window.open_url("http://127.0.0.1:" + text(PORT) + "/#t=" + OTHER["token"])
+    -- nothing to serve: end here. Under serve, exit() ends the program with an error line, which this
+    -- console-less binary never shows
+    exit(0)
 
 write_file("~/.atril/daemon.json", json_encode({"port": PORT, "token": TOKEN, "machine": MACHINE}))
 
@@ -104,6 +138,40 @@ task git_branch(dir)
         set d to up
         set depth to depth + 1
     give nothing
+
+-- the folders inside path, for the picker: hidden and system folders left out, repositories marked
+task list_dirs(path)
+    let base be regex_replace(replace(text(path), "\\", "/"), "/+$", "")
+    when base == ""
+        set base to replace(HOME, "\\", "/")
+    let dir be when regex_find_all(base, "^[A-Za-z]:$") then base + "/" otherwise base
+    let prefix be when ends_with(dir, "/") then dir otherwise dir + "/"
+    let out be []
+    each e in list_dir(dir)
+        when e["is_dir"] and not starts_with(e["name"], ".") and not starts_with(e["name"], "$") and e["name"] != "node_modules" and e["name"] != "System Volume Information" and length(out) < 500
+            let child be prefix + e["name"]
+            set out to out + [{"name": e["name"], "path": child, "branch": (when file_info(child + "/.git")["exists"] then git_branch(child) otherwise nothing)}]
+    let parent be regex_replace(base, "/[^/]*$", "")
+    give {"path": dir, "parent": (when parent == base or parent == "" then nothing otherwise parent), "branch": git_branch(dir), "dirs": out}
+
+-- repositories near home, the most recently touched first: what "new" offers before you browse
+task suggestions()
+    let h be replace(HOME, "\\", "/")
+    let seen be []
+    let found be []
+    each root in [h, h + "/Desktop", h + "/OneDrive/Desktop", h + "/Documents", h + "/Projects", h + "/code", h + "/dev", h + "/src", h + "/source/repos", h + "/repos", h + "/git", h + "/work"]
+        when file_info(root)["is_dir"] and space_key(root) not in seen
+            set seen to seen + [space_key(root)]
+            try
+                each e in list_dir(root)
+                    let child be root + "/" + e["name"]
+                    when e["is_dir"] and not starts_with(e["name"], ".") and file_info(child + "/.git")["exists"] and space_key(child) not in seen
+                        set seen to seen + [space_key(child)]
+                        let touched be file_info(child + "/.git/index")["modified"]
+                        set found to found + [{"name": e["name"], "path": child, "branch": git_branch(child), "touched": (when touched == nothing then 0 otherwise touched)}]
+            recover e
+                set seen to seen
+    give slice(sort_by(found, (r) => r["touched"], desc = true), 0, 40)
 
 task spaces_view()
     let out be []
@@ -190,6 +258,9 @@ agent Session
                 bus_publish("out." + sid, {"t": "snap", "s": seq, "d": buf, "to": m["to"]})
             otherwise when m["t"] == "kill"
                 proc_kill(p)
+            otherwise when m["t"] == "name"
+                set meta["name"] to m["name"]
+                publish_meta(meta)
 
 -- what a window may send to a session, and nothing else: keys, or a new size
 task clean_input(m)
@@ -265,6 +336,31 @@ serve on 7171
         let ref be when b == nothing then nothing otherwise get(b, "ref")
         give {"shown": bus_publish("ui", {"ref": ref}) > 0}
 
+    route "GET /api/dirs" requires auth
+        try
+            give list_dirs(get(query, "path", ""))
+        recover e
+            give fail(400, "cannot open that folder: " + text(e))
+
+    route "GET /api/dirs/suggest" requires auth
+        give {"home": HOME, "repos": suggestions()}
+
+    -- a title for a session: what you will do there, to remember it and to find it
+    route "POST /api/sessions/:ref/rename" requires auth
+        let s be find_session(params.ref)
+        when s == nothing
+            give not_found("no session " + params.ref)
+        let b be json of request
+        let nm be trim(text(when b == nothing then "" otherwise get(b, "name", "")))
+        when nm == "" or length(nm) > 80 or regex_find_all(nm, "[\u0000-\u001f]")
+            give fail(400, "a title is 1 to 80 characters, on one line")
+        when s["status"] == "running"
+            bus_publish("in." + s["id"], {"t": "name", "name": nm})
+        otherwise
+            set s["name"] to nm
+            publish_meta(s)
+        give {"ok": true, "id": s["id"], "name": nm}
+
     route "GET /api/spaces" requires auth
         give spaces_view()
 
@@ -273,7 +369,7 @@ serve on 7171
         let b be json of request
         let path be when b == nothing then "" otherwise text(get(b, "path", ""))
         when path == "" or not file_info(path)["is_dir"]
-            give bad_request("no such folder: " + path)
+            give fail(400, "no such folder: " + path)
         give {"key": add_space(path)}
 
     -- forget a space with nothing running in it
@@ -282,7 +378,7 @@ serve on 7171
         let key be when b == nothing then "" otherwise space_key(get(b, "key", ""))
         each s in sessions()
             when get(s, "space") == key and s["status"] == "running"
-                give bad_request("something is still running in that space")
+                give fail(400, "something is still running in that space")
         state_set("spaces", where(state_get("spaces", []), (sp) => sp["key"] != key))
         bus_publish("spaces", {"changed": key})
         give {"ok": true}
@@ -336,7 +432,7 @@ serve on 7171
         when s == nothing
             give not_found("no session " + params.ref)
         when s["status"] == "running"
-            give bad_request("session " + s["id"] + " is still running: kill it first")
+            give fail(400, "session " + s["id"] + " is still running: kill it first")
         state_delete("sess:" + s["id"])
         state_delete("tail:" + s["id"])
         bus_publish("sessions", {"id": s["id"], "status": "removed"})
@@ -399,3 +495,5 @@ serve on 7171
                         ws_send(socket, json_encode(m))
 
 print("atril: listening on http://127.0.0.1:" + text(PORT) + " — key in ~/.atril/daemon.json")
+when not BACKGROUND
+    window.open_url("http://127.0.0.1:" + text(PORT) + "/#t=" + TOKEN)

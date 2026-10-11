@@ -29,7 +29,7 @@
   </aside>
 
   <main id="main">
-    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><button id="plus" title="Nueva terminal">+</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal (Ctrl+Shift+T)">+</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
         <p id="empty-title">Este space no tiene terminales.</p>
@@ -51,8 +51,19 @@
   </div>
 </div>
 
+<div id="picker" hidden>
+  <div class="box wide">
+    <div class="ph">Nuevo space <span class="muted">· la carpeta de un proyecto</span></div>
+    <input id="pq" placeholder="filtrá, o pegá una ruta y Enter…" autocomplete="off" spellcheck="false">
+    <div id="pcrumb"></div>
+    <ul id="plist"></ul>
+    <div class="pfoot"><span id="pmsg" class="muted"></span><button id="pcancel">Cancelar</button><button id="pok" class="primary">Abrir acá</button></div>
+  </div>
+</div>
+
 <div id="ctx" hidden>
   <button data-a="open">Abrir</button>
+  <button data-a="rename">Ponerle título…</button>
   <button data-a="kill" class="danger">Matar proceso</button>
   <button data-a="restart">Reiniciar</button>
   <button data-a="remove">Quitar de la lista</button>

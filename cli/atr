@@ -1,3 +1,4 @@
 #!/bin/sh
 # launcher: tells atr.syn where Atril lives
-ATRIL_HOME="$(cd "$(dirname "$0")/.." && pwd)" exec synsema run "$(dirname "$0")/atr.syn" -- "$@"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ATRIL_HOME="$(dirname "$HERE")" exec synsema run "$(dirname "$HERE")/src/atr.syn" -- "$@"
