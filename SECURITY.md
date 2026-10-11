@@ -13,6 +13,11 @@ your user on that machine. Atril is built around one question: **who can open a 
 | DNS rebinding (`evil.com` resolving to 127.0.0.1) | `Host` must be `127.0.0.1:7171` or `localhost:7171` | `Host: evil.com:7171` → 401 |
 | A window sends something other than keys | The attach socket forwards only `{keys}` and `{resize}` (validated sizes); killing is a separate, authenticated route | a `{"t":"kill"}` sent over the socket is dropped |
 
+**Another person who also uses Atril** runs their own daemon on their own computer, with their own
+key. In v0.1 there is no path at all between two daemons: neither listens on the network, and
+neither knows the other exists. Two people on the **same** computer (two Windows accounts) share
+127.0.0.1, but the key lives in each one's profile folder, which the other account cannot read.
+
 Known gaps, in order:
 - `~/.atril/daemon.json` relies on your home folder being private; on Linux/macOS it should be `chmod 600`.
 - `atr open` passes the key in the URL fragment on the browser's command line, visible to other

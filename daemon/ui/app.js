@@ -1,12 +1,13 @@
-// Atril UI: a sidebar of live sessions, tabs, and one xterm.js per open tab.
-// Closing a tab only closes its socket: the session keeps running in the daemon.
+// Atril UI. A space is a folder (with its git branch); its tabs are the sessions that run in it.
+// The agents list shows only agents, from every space. Closing a tab only hides it and closes its
+// socket: the program keeps running in the daemon, and agents / find bring it back.
 "use strict";
 
 const $ = (s) => document.querySelector(s);
 const WS = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 const sessions = new Map();   // id -> metadata from the daemon
-const tabs = new Map();       // id -> {term, fit, ws, el, tab}
-let active = null;
+let spaces = [];              // [{key, path, name, branch}]
+const terms = new Map();      // id -> {term, fit, ws, el, ...} for tabs that were shown
 let machine = "";
 let wanted = null;            // `atr open <session>`: the tab to show first
 
@@ -14,6 +15,9 @@ const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
+let current = store.get("space", null);                 // the space on screen
+const hidden = new Set(store.get("hidden", []));        // tabs closed in this window
+const lastTab = store.get("lastTab", {});               // space -> the tab it showed last
 
 // ---- login: `atr open` brings the key in the fragment; it becomes an HttpOnly cookie
 async function login() {
@@ -34,23 +38,94 @@ async function api(method, path, body) {
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error((await r.text()) || r.status);
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
 }
 
-// ---- sidebar
+// ---- what a session is doing
 function statusOf(s) {
   if (s.status === "exited") return "exited";
   if (s.bell) return "bell";
   return s.activity || "idle";
 }
-const LABEL = { working: "trabajando", idle: "esperando", bell: "te necesita", exited: "terminó" };
-// quiet means different things: an agent is waiting for you, a shell is just there
+const isAgent = (s) => s.kind !== "shell";
 function label(s) {
   const st = statusOf(s);
-  if (st === "idle" && s.kind === "shell") return "inactiva";
-  if (st === "idle") return "esperándote";
-  return LABEL[st];
+  if (st === "exited") return "terminó";
+  if (st === "bell") return "te necesita";
+  if (st === "working") return "trabajando";
+  return isAgent(s) ? "esperándote" : "inactiva";
+}
+const inSpace = (key) => [...sessions.values()].filter((s) => s.space === key).sort((a, b) => a.started - b.started);
+const spaceOf = (key) => spaces.find((sp) => sp.key === key);
+
+// a tab's name: what you called it, else the agent, else its number in the space
+function tabName(s, i) {
+  const auto = /^[a-z-]+-\d+$/.test(s.name);
+  if (!auto) return s.name;
+  return isAgent(s) ? s.kind : String(i + 1);
+}
+
+// ---- sidebar
+function renderSide() {
+  $("#machine").textContent = machine ? "· " + machine : "";
+  const ul = $("#spaces");
+  ul.innerHTML = "";
+  for (const sp of spaces) {
+    const list = inSpace(sp.key);
+    const li = document.createElement("li");
+    li.className = sp.key === current ? "on" : "";
+    li.title = sp.path;
+    const needs = list.some((s) => s.status === "running" && isAgent(s) && statusOf(s) !== "working");
+    const busy = list.some((s) => s.status === "running" && statusOf(s) === "working");
+    li.innerHTML = `<span class="st ${needs ? "bell" : busy ? "working" : list.some((s) => s.status === "running") ? "idle" : "exited"}"></span><span class="name"></span><span class="meta"></span><span class="branch"></span>`;
+    li.querySelector(".name").textContent = sp.name;
+    li.querySelector(".meta").textContent = list.filter((s) => s.status === "running").length || "";
+    li.querySelector(".branch").textContent = sp.branch || "";
+    li.onclick = () => { selectSpace(sp.key); $("#side").classList.remove("show"); };
+    li.oncontextmenu = (e) => { e.preventDefault(); showSpaceMenu(sp, e.clientX, e.clientY); };
+    ul.append(li);
+  }
+
+  const agents = [...sessions.values()].filter(isAgent);
+  $("#count").textContent = agents.length ? `${agents.filter((s) => s.status === "running").length} vivos` : "";
+  const al = $("#agents");
+  al.innerHTML = "";
+  if (!agents.length) {
+    const li = document.createElement("li");
+    li.className = "none";
+    li.textContent = "ninguno todavía: corré claude, codex… en una pestaña";
+    al.append(li);
+  }
+  for (const sp of spaces) {
+    const group = agents.filter((s) => s.space === sp.key);
+    if (!group.length) continue;
+    const g = document.createElement("li");
+    g.className = "group";
+    g.textContent = sp.name + (sp.branch ? " · " + sp.branch : "");
+    al.append(g);
+    for (const s of group) al.append(agentItem(s));
+  }
+  renderTabs();
+}
+
+function agentItem(s) {
+  const li = document.createElement("li");
+  const st = statusOf(s);
+  li.className = s.id === lastTab[current] && s.space === current ? "open" : "";
+  li.title = `${s.cmd} ${(s.args || []).join(" ")}\n${s.cwd}\npid ${s.pid} · ${s.id}`;
+  li.innerHTML = `<span class="st ${st === "idle" ? "bell" : st}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
+  li.querySelector(".name").textContent = s.name;
+  li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
+  const title = s.title && s.status === "running" && !/[\\/].*\.(exe|cmd)$/i.test(s.title) ? s.title : null;
+  li.querySelector(".sub").textContent = `${label(s)}${title ? " · " + title : ""}`;
+  li.onclick = () => { reveal(s.id); $("#side").classList.remove("show"); };
+  li.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.id, e.clientX, e.clientY); };
+  let press;
+  li.ontouchstart = (e) => { press = setTimeout(() => showCtx(s.id, e.touches[0].clientX, e.touches[0].clientY), 550); };
+  li.ontouchend = li.ontouchmove = () => clearTimeout(press);
+  return li;
 }
 
 function ago(ts) {
@@ -61,93 +136,154 @@ function ago(ts) {
   return Math.floor(d / 86400) + "d";
 }
 
-function renderSide() {
-  $("#spaces").innerHTML = "";
-  const li = document.createElement("li");
-  li.className = "on";
-  li.innerHTML = `<span class="st idle"></span><span></span>`;
-  li.lastChild.textContent = machine || "this computer";
-  $("#spaces").append(li);
-
-  const list = [...sessions.values()];
-  const agents = list.filter((s) => s.kind !== "shell");
-  const shells = list.filter((s) => s.kind === "shell");
-  $("#count").textContent = list.filter((s) => s.status === "running").length + " vivas";
-  const ul = $("#agents");
-  ul.innerHTML = "";
-  for (const [title, group] of [["agentes", agents], ["terminales", shells]]) {
-    if (!group.length) continue;
-    const g = document.createElement("li");
-    g.className = "group";
-    g.textContent = title;
-    ul.append(g);
-    for (const s of group) ul.append(sessionItem(s));
-  }
-  renderTabs();
-}
-
-function sessionItem(s) {
-  const li = document.createElement("li");
-  const st = statusOf(s);
-  li.className = tabs.has(s.id) ? "open" : "";
-  li.title = `${s.cmd} ${(s.args || []).join(" ")}\npid ${s.pid} · ${s.id} · ${label(s)}`;
-  li.innerHTML = `<span class="st ${st}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
-  li.querySelector(".name").textContent = s.name;
-  li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
-  // a title that is only the program's path says nothing: show the state instead
-  const title = s.title && !/[\\/].*\.(exe|cmd)$/i.test(s.title) && s.title !== s.cmd ? s.title : null;
-  li.querySelector(".sub").textContent = title && s.status === "running" ? title : `${label(s)} · pid ${s.pid}`;
-  li.onclick = () => { openTab(s.id); $("#side").classList.remove("show"); };
-  li.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.id, e.clientX, e.clientY); };
-  let press;
-  li.ontouchstart = (e) => { press = setTimeout(() => showCtx(s.id, e.touches[0].clientX, e.touches[0].clientY), 550); };
-  li.ontouchend = li.ontouchmove = () => clearTimeout(press);
-  return li;
-}
-
 function events() {
   const ws = new WebSocket(WS + "/api/events");
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.t === "show") { show(m.ref); return; }
-    if (m.t === "all") { sessions.clear(); for (const s of m.sessions) sessions.set(s.id, s); }
-    else if (m.session.status === "removed") sessions.delete(m.session.id);
+    if (m.t === "show") return show(m.ref);
+    if (m.t === "spaces") spaces = m.spaces;
+    else if (m.t === "all") {
+      sessions.clear();
+      for (const s of m.sessions) sessions.set(s.id, s);
+      spaces = m.spaces;
+      if (!spaceOf(current)) current = spaces.length ? spaces[0].key : null;
+    } else if (m.session.status === "removed") { sessions.delete(m.session.id); dropTerm(m.session.id); }
     else sessions.set(m.session.id, m.session);
     renderSide();
   };
   ws.onclose = () => setTimeout(events, 1500);
 }
-setInterval(renderSide, 30000);   // keep the "ago" column honest
+// the branch can change under us (git checkout in a tab): look again now and then
+setInterval(async () => { try { spaces = (await api("GET", "/api/spaces")).items; renderSide(); } catch {} }, 15000);
+
+// ---- spaces and tabs
+function selectSpace(key) {
+  current = key;
+  store.set("space", key);
+  const visible = tabsOf(key);
+  const want = visible.find((s) => s.id === lastTab[key]) || visible[visible.length - 1];
+  if (want) focusTab(want.id); else { showOnly(null); renderSide(); }
+}
+
+const tabsOf = (key) => inSpace(key).filter((s) => !hidden.has(s.id));
+
+function renderTabs() {
+  const bar = $("#tablist");
+  bar.innerHTML = "";
+  const list = tabsOf(current);
+  list.forEach((s, i) => {
+    const el = document.createElement("div");
+    el.className = "tab" + (s.id === lastTab[current] ? " on" : "");
+    const st = statusOf(s);
+    el.innerHTML = `<span class="st ${st === "idle" && isAgent(s) ? "bell" : st}"></span><span class="t"></span><button class="x"></button>`;
+    el.querySelector(".t").textContent = tabName(s, i);
+    const x = el.querySelector(".x");
+    x.textContent = "×";
+    x.title = s.status === "running" ? "Cerrar pestaña (el programa sigue: está en agents / find)" : "Cerrar y olvidar";
+    el.title = `${s.name} · ${label(s)}`;
+    el.onclick = (e) => { if (e.target !== x) focusTab(s.id); };
+    x.onclick = () => closeTab(s.id);
+    el.onauxclick = (e) => { if (e.button === 1) closeTab(s.id); };
+    el.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.id, e.clientX, e.clientY); };
+    bar.append(el);
+  });
+  const sp = spaceOf(current);
+  $("#empty").hidden = list.length > 0;
+  $("#empty-title").textContent = sp ? `${sp.name} no tiene terminales abiertas.` : "Creá un space con new.";
+  document.title = "Atril · " + (sp ? sp.name : machine);
+}
+
+// show a session wherever it is: its space, its tab
+function reveal(id) {
+  const s = sessions.get(id);
+  if (!s) return;
+  hidden.delete(id);
+  store.set("hidden", [...hidden]);
+  current = s.space;
+  store.set("space", current);
+  focusTab(id);
+}
+
+function focusTab(id) {
+  const s = sessions.get(id);
+  if (!s) return;
+  lastTab[s.space] = id;
+  store.set("lastTab", lastTab);
+  const t = terms.get(id) || makeTerm(id);
+  showOnly(id);
+  requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); });
+  renderSide();
+}
+
+function showOnly(id) { for (const [k, t] of terms) t.el.hidden = k !== id; }
+
+function closeTab(id) {
+  const s = sessions.get(id);
+  dropTerm(id);
+  if (s && s.status !== "running") {
+    api("DELETE", `/api/sessions/${id}`).catch(() => {});   // ended: nothing to keep
+  } else {
+    hidden.add(id);
+    store.set("hidden", [...hidden]);
+  }
+  if (lastTab[current] === id) delete lastTab[current];
+  const rest = tabsOf(current).filter((x) => x.id !== id);
+  if (rest.length) focusTab(rest[rest.length - 1].id); else { showOnly(null); renderSide(); }
+}
+
+function dropTerm(id) {
+  const t = terms.get(id);
+  if (!t) return;
+  t.closing = true;
+  t.ws && t.ws.close();
+  t.term.dispose();
+  t.el.remove();
+  terms.delete(id);
+}
+
+async function newTab(body = {}) {
+  const sp = spaceOf(current);
+  const t = terms.get(lastTab[current]);
+  const s = await api("POST", "/api/sessions", {
+    cols: t ? t.term.cols : 120, rows: t ? t.term.rows : 32,
+    cwd: sp ? sp.path : undefined, ...body,
+  });
+  sessions.set(s.id, s);
+  reveal(s.id);
+}
+
+async function newSpace() {
+  const path = prompt("Carpeta del nuevo space (por ejemplo C:\\Users\\joell\\desktop\\rapibase):", "");
+  if (!path) return;
+  try {
+    const { key } = await api("POST", "/api/spaces", { path: path.trim() });
+    current = key;
+    store.set("space", key);
+    await newTab({ cwd: path.trim() });
+  } catch (e) { alert(e.message); }
+}
+
+// the same program again, in the same folder and with the same name
+async function restart(id) {
+  const s = sessions.get(id);
+  if (!s) return;
+  dropTerm(id);
+  await api("DELETE", `/api/sessions/${id}`);
+  sessions.delete(id);
+  current = s.space;
+  await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name });
+}
 
 // `atr open [session]` while this window is open: show it here
 function show(ref) {
   window.focus();
   if (!ref) return;
   const s = [...sessions.values()].reverse().find((x) => [x.id, x.name, String(x.pid)].includes(ref));
-  if (s) openTab(s.id);
+  if (s) reveal(s.id);
 }
 
-// ---- tabs
-function renderTabs() {
-  const bar = $("#tablist");
-  bar.innerHTML = "";
-  for (const [id, t] of tabs) {
-    const s = sessions.get(id) || { name: id };
-    const el = document.createElement("div");
-    el.className = "tab" + (id === active ? " on" : "");
-    el.innerHTML = `<span class="st ${statusOf(s)}"></span><span class="t"></span><button class="x" title="Cerrar pestaña (el programa sigue)">×</button>`;
-    el.querySelector(".t").textContent = s.name;
-    el.onclick = (e) => { if (!e.target.classList.contains("x")) focusTab(id); };
-    el.querySelector(".x").onclick = () => closeTab(id);
-    el.onauxclick = (e) => { if (e.button === 1) closeTab(id); };
-    bar.append(el);
-  }
-  $("#empty").hidden = tabs.size > 0;
-  store.set("tabs", [...tabs.keys()]);
-}
-
-function openTab(id) {
-  if (tabs.has(id)) return focusTab(id);
+// ---- one terminal per tab that was shown
+function makeTerm(id) {
   const el = document.createElement("div");
   el.className = "term";
   $("#stage").append(el);
@@ -161,7 +297,7 @@ function openTab(id) {
   term.open(el);
   term.attachCustomKeyEventHandler(shortcuts);
   const t = { term, fit, el, ws: null, ctrl: false };
-  tabs.set(id, t);
+  terms.set(id, t);
   connect(id, t);
   term.onData((d) => {
     if (t.ended) return;
@@ -176,7 +312,7 @@ function openTab(id) {
       t.term.write("\r\n\x1b[33mEste programa ya terminó: lo que escribas no llega a ningún lado. Usá «Reiniciar».\x1b[0m\r\n");
     }
   });
-  focusTab(id);
+  return t;
 }
 
 function connect(id, t) {
@@ -197,57 +333,19 @@ function connect(id, t) {
       end.firstChild.textContent = `terminó · código ${m.code ?? "?"}`;
       end.lastChild.onclick = () => restart(id);
       t.el.append(end);
-      renderSide();
-    } else if (m.t === "error") closeTab(id);   // a tab remembered from a session that is gone
+    } else if (m.t === "error") closeTab(id);   // a session that is gone
   };
   ws.onclose = () => {
     // the daemon or the network went away; the session may still be alive: try again
-    if (tabs.get(id) === t && !t.closing) setTimeout(() => { if (tabs.get(id) === t) { t.term.reset(); connect(id, t); } }, 2000);
+    if (terms.get(id) === t && !t.closing) setTimeout(() => { if (terms.get(id) === t) { t.term.reset(); connect(id, t); } }, 2000);
   };
 }
 
 function send(t, m) { if (t.ws && t.ws.readyState === 1) t.ws.send(JSON.stringify(m)); }
 
-function focusTab(id) {
-  active = id;
-  for (const [k, t] of tabs) t.el.hidden = k !== id;
-  const t = tabs.get(id);
-  if (t) { requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); }); }
-  renderSide();
-}
+window.addEventListener("resize", () => { const t = terms.get(lastTab[current]); if (t) t.fit.fit(); });
 
-function closeTab(id) {
-  const t = tabs.get(id);
-  if (!t) return;
-  t.closing = true;
-  t.ws && t.ws.close();
-  t.term.dispose();
-  t.el.remove();
-  tabs.delete(id);
-  if (active === id) active = [...tabs.keys()].pop() || null;
-  if (active) focusTab(active); else renderSide();
-}
-
-// the same program again, in the same folder and with the same name
-async function restart(id) {
-  const s = sessions.get(id);
-  if (!s) return;
-  closeTab(id);
-  await api("DELETE", `/api/sessions/${id}`);
-  sessions.delete(id);
-  await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name });
-}
-
-async function newTab(body = {}) {
-  const t = active && tabs.get(active);
-  const s = await api("POST", "/api/sessions", { cols: t ? t.term.cols : 120, rows: t ? t.term.rows : 32, ...body });
-  sessions.set(s.id, s);
-  openTab(s.id);
-}
-
-window.addEventListener("resize", () => { const t = tabs.get(active); if (t) t.fit.fit(); });
-
-// ---- palette: find any session by name, command, title, pid or id
+// ---- palette: any session of any space, by name, command, title, folder, pid or id
 function openPalette() {
   $("#palette").hidden = false;
   $("#q").value = "";
@@ -258,7 +356,7 @@ let sel = 0;
 function matches() {
   const q = $("#q").value.toLowerCase().trim();
   return [...sessions.values()].filter((s) =>
-    !q || [s.name, s.cmd, s.title, String(s.pid), s.id, s.kind].some((v) => v && String(v).toLowerCase().includes(q)));
+    !q || [s.name, s.cmd, s.title, s.cwd, String(s.pid), s.id, s.kind].some((v) => v && String(v).toLowerCase().includes(q)));
 }
 function paint() {
   const ul = $("#results");
@@ -270,12 +368,12 @@ function paint() {
     li.className = i === sel ? "sel" : "";
     li.innerHTML = `<span class="st ${statusOf(s)}"></span><span></span><span class="meta"></span>`;
     li.children[1].textContent = s.name;
-    li.children[2].textContent = `${s.cmd} · pid ${s.pid} · ${s.id}`;
+    li.children[2].textContent = `${(spaceOf(s.space) || {}).name || s.cwd} · ${s.cmd} · pid ${s.pid}`;
     li.onclick = () => pick(s.id);
     ul.append(li);
   });
 }
-function pick(id) { $("#palette").hidden = true; openTab(id); }
+function pick(id) { $("#palette").hidden = true; reveal(id); }
 $("#q").oninput = () => { sel = 0; paint(); };
 $("#q").onkeydown = (e) => {
   const list = matches();
@@ -286,29 +384,49 @@ $("#q").onkeydown = (e) => {
 };
 $("#palette").onclick = (e) => { if (e.target.id === "palette") $("#palette").hidden = true; };
 
-// ---- context menu
+// ---- context menus
 let ctxId = null;
+let ctxSpace = null;
+function place(m, x, y) {
+  m.hidden = false;
+  m.style.left = Math.min(x, innerWidth - 190) + "px";
+  m.style.top = Math.min(y, innerHeight - 140) + "px";
+}
 function showCtx(id, x, y) {
   ctxId = id;
+  ctxSpace = null;
   const m = $("#ctx");
-  m.hidden = false;
-  m.style.left = Math.min(x, innerWidth - 180) + "px";
-  m.style.top = Math.min(y, innerHeight - 120) + "px";
   const s = sessions.get(id);
+  for (const b of m.querySelectorAll("button")) b.hidden = b.dataset.for === "space";
   m.querySelector('[data-a="kill"]').hidden = s.status !== "running";
   m.querySelector('[data-a="remove"]').hidden = s.status === "running";
   m.querySelector('[data-a="restart"]').hidden = s.status === "running";
+  place(m, x, y);
+}
+function showSpaceMenu(sp, x, y) {
+  ctxSpace = sp;
+  const m = $("#ctx");
+  for (const b of m.querySelectorAll("button")) b.hidden = b.dataset.for !== "space";
+  place(m, x, y);
 }
 document.addEventListener("click", (e) => { if (!e.target.closest("#ctx")) $("#ctx").hidden = true; });
 $("#ctx").onclick = async (e) => {
   const a = e.target.dataset.a;
   if (!a) return;
   $("#ctx").hidden = true;
-  const s = sessions.get(ctxId);
-  if (a === "open") openTab(ctxId);
-  if (a === "kill" && confirm(`¿Matar ${s.name} (pid ${s.pid})? El programa se cierra.`)) await api("POST", `/api/sessions/${ctxId}/kill`);
-  if (a === "restart") await restart(ctxId);
-  if (a === "remove") { closeTab(ctxId); await api("DELETE", `/api/sessions/${ctxId}`); }
+  try {
+    if (a === "forget") {
+      await api("POST", "/api/spaces/forget", { key: ctxSpace.key });
+      if (current === ctxSpace.key) current = null;
+      return;
+    }
+    if (a === "newtab") { current = ctxSpace.key; return newTab(); }
+    const s = sessions.get(ctxId);
+    if (a === "open") reveal(ctxId);
+    if (a === "kill" && confirm(`¿Matar ${s.name} (pid ${s.pid})? El programa se cierra.`)) await api("POST", `/api/sessions/${ctxId}/kill`);
+    if (a === "restart") await restart(ctxId);
+    if (a === "remove") closeTab(ctxId);
+  } catch (err) { alert(err.message); }
 };
 
 // ---- keys
@@ -316,11 +434,11 @@ function shortcuts(e) {
   if (e.type !== "keydown") return true;
   if (e.ctrlKey && e.shiftKey && e.code === "KeyK") { openPalette(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { newTab(); return false; }
-  if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (active) closeTab(active); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (lastTab[current]) closeTab(lastTab[current]); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
   if (e.ctrlKey && e.code === "Tab") {
-    const ids = [...tabs.keys()];
-    if (ids.length) focusTab(ids[(ids.indexOf(active) + (e.shiftKey ? -1 : 1) + ids.length) % ids.length]);
+    const ids = tabsOf(current).map((s) => s.id);
+    if (ids.length) focusTab(ids[(ids.indexOf(lastTab[current]) + (e.shiftKey ? -1 : 1) + ids.length) % ids.length]);
     return false;
   }
   return true;
@@ -331,23 +449,25 @@ const KEYS = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B", right: "\x1
 function setCtrl(t, on) { t.ctrl = on; $('#keys [data-k="ctrl"]').classList.toggle("on", on); }
 $("#keys").onclick = (e) => {
   const k = e.target.dataset.k;
-  const t = tabs.get(active);
+  const t = terms.get(lastTab[current]);
   if (!k || !t) return;
   if (k === "ctrl") setCtrl(t, !t.ctrl); else send(t, { t: "i", d: KEYS[k] });
   t.term.focus();
 };
 
-$("#new").onclick = $("#plus").onclick = () => newTab();
-$("#find").onclick = openPalette;
 function setSide(open) {
   $("#side").classList.toggle("collapsed", !open);
   $("#expand").hidden = open;
   store.set("side", open);
-  requestAnimationFrame(() => { const t = tabs.get(active); if (t) t.fit.fit(); });
+  requestAnimationFrame(() => { const t = terms.get(lastTab[current]); if (t) t.fit.fit(); });
 }
 $("#collapse").onclick = () => setSide(false);
 $("#expand").onclick = () => setSide(true);
 setSide(store.get("side", true));
+
+$("#plus").onclick = () => newTab();
+$("#new").onclick = newSpace;
+$("#find").onclick = openPalette;
 $("#menu").onclick = () => $("#side").classList.toggle("show");
 $("#stage").onclick = () => $("#side").classList.remove("show");
 
@@ -357,12 +477,12 @@ $("#stage").onclick = () => $("#side").classList.remove("show");
     document.body.innerHTML = `<p style="padding:40px;color:#9a9aa2">Abrí Atril con <b style="color:#e6e6ea">atr open</b>: trae la llave de esta computadora.</p>`;
     return;
   }
-  document.title = "Atril · " + machine;
   events();
-  for (const id of store.get("tabs", [])) openTab(id);
-  if (wanted) {
-    const { items } = await api("GET", "/api/sessions");
-    const s = items.find((x) => [x.id, x.name, String(x.pid)].includes(wanted));
-    if (s) openTab(s.id);
-  }
+  // the first list arrives on the events socket; then show what was asked, or the last space
+  const ready = setInterval(() => {
+    if (!spaces.length && !sessions.size) return;
+    clearInterval(ready);
+    if (wanted) show(wanted);
+    else if (current) selectSpace(current);
+  }, 100);
 })();

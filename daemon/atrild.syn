@@ -29,6 +29,7 @@ require env("SHELL")
 require env("USERPROFILE")
 require env("HOME")
 require file.write("~/.atril/*")
+require file.read          -- a space's .git/HEAD, wherever the project lives (its shells can read it anyway)
 
 let PORT be 7171
 let TOKEN be token(32)
@@ -69,6 +70,58 @@ task title_in(chunk)
     let last be found[length(found) - 1]
     give regex_replace(regex_replace(last, "^\u001b\\][02];", ""), "(\u0007|\u001b\\\\)$", "")
 
+-- ---- spaces: the folders sessions run in, each with its git branch
+
+-- one spelling per folder: / separators, no trailing /, case-blind on Windows
+task space_key(path)
+    let p be regex_replace(replace(text(path), "\\", "/"), "/+$", "")
+    give when platform()["os"] == "windows" then lower(p) otherwise p
+
+-- the branch of the repository that holds dir (looking up its parents), or nothing
+task git_branch(dir)
+    let d be regex_replace(replace(text(dir), "\\", "/"), "/+$", "")
+    let depth be 0
+    while depth < 40
+        let g be d + "/.git"
+        let info be file_info(g)
+        when info["exists"]
+            let gitdir be g
+            when not info["is_dir"]
+                -- a worktree or a submodule: .git is a file saying where the repository is
+                set gitdir to trim(replace(read_file(g), "gitdir:", ""))
+                when not regex_find_all(gitdir, "^([A-Za-z]:)?/")
+                    set gitdir to d + "/" + gitdir
+            try
+                let head be trim(read_file(gitdir + "/HEAD"))
+                when starts_with(head, "ref: refs/heads/")
+                    give slice(head, 16)
+                give slice(head, 0, 7)
+            recover e
+                give nothing
+        let up be regex_replace(d, "/[^/]*$", "")
+        when up == d or up == ""
+            give nothing
+        set d to up
+        set depth to depth + 1
+    give nothing
+
+task spaces_view()
+    let out be []
+    each sp in state_get("spaces", [])
+        let name be regex_replace(regex_replace(replace(sp["path"], "\\", "/"), "/+$", ""), "^.*/", "")
+        set out to out + [{"key": sp["key"], "path": sp["path"], "name": (when name == "" then sp["path"] otherwise name), "branch": git_branch(sp["path"])}]
+    give out
+
+task add_space(path)
+    let key be space_key(path)
+    let all be state_get("spaces", [])
+    each sp in all
+        when sp["key"] == key
+            give key
+    state_set("spaces", all + [{"key": key, "path": path}])
+    bus_publish("spaces", {"changed": key})
+    give key
+
 task publish_meta(meta)
     state_set("sess:" + meta["id"], meta)
     bus_publish("sessions", meta)
@@ -79,7 +132,7 @@ agent Session
     require time
     let p be proc_spawn(cmd, args, {"pty": true, "cols": cols, "rows": rows, "cwd": cwd})
     let inbox be bus_subscribe("in." + sid)
-    let meta be {"id": sid, "name": name, "cmd": cmd, "args": args, "cwd": cwd, "kind": kind_of(cmd),
+    let meta be {"id": sid, "name": name, "cmd": cmd, "args": args, "cwd": cwd, "space": space_key(cwd), "kind": kind_of(cmd),
         "pid": proc_stats(p)["pid"], "machine": MACHINE, "started": now(), "status": "running",
         "activity": "working", "title": nothing, "exit_code": nothing, "bell": false}
     publish_meta(meta)
@@ -212,6 +265,28 @@ serve on 7171
         let ref be when b == nothing then nothing otherwise get(b, "ref")
         give {"shown": bus_publish("ui", {"ref": ref}) > 0}
 
+    route "GET /api/spaces" requires auth
+        give spaces_view()
+
+    -- a new space: a folder that exists
+    route "POST /api/spaces" requires auth
+        let b be json of request
+        let path be when b == nothing then "" otherwise text(get(b, "path", ""))
+        when path == "" or not file_info(path)["is_dir"]
+            give bad_request("no such folder: " + path)
+        give {"key": add_space(path)}
+
+    -- forget a space with nothing running in it
+    route "POST /api/spaces/forget" requires auth
+        let b be json of request
+        let key be when b == nothing then "" otherwise space_key(get(b, "key", ""))
+        each s in sessions()
+            when get(s, "space") == key and s["status"] == "running"
+                give bad_request("something is still running in that space")
+        state_set("spaces", where(state_get("spaces", []), (sp) => sp["key"] != key))
+        bus_publish("spaces", {"changed": key})
+        give {"ok": true}
+
     route "GET /api/info" requires auth
         give {"machine": MACHINE, "os": platform()["os"], "version": "0.1.0"}
 
@@ -238,6 +313,7 @@ serve on 7171
         let cwd be get(b, "cwd")
         when cwd == nothing or cwd == ""
             set cwd to HOME
+        add_space(cwd)
         let cols be int(get(b, "cols"), fallback = 120)
         let rows be int(get(b, "rows"), fallback = 32)
         spawn Session with sid = sid, name = nm, cmd = cmd, args = args, cwd = cwd, cols = cols, rows = rows
@@ -270,13 +346,15 @@ serve on 7171
     route "GET /api/events" requires auth
         timeout none
         socket
-            let sub be bus_subscribe(["sessions", "ui"])
-            ws_send(socket, json_encode({"t": "all", "sessions": sessions()}))
+            let sub be bus_subscribe(["sessions", "ui", "spaces"])
+            ws_send(socket, json_encode({"t": "all", "sessions": sessions(), "spaces": spaces_view()}))
             while true
                 let ev be select({"ui": socket, "bus": sub}, 30)
                 when ev != nothing and ev["name"] == "ui"
                     when ev["type"] == "close"
                         stop
+                otherwise when ev != nothing and ev["topic"] == "spaces"
+                    ws_send(socket, json_encode({"t": "spaces", "spaces": spaces_view()}))
                 otherwise when ev != nothing and ev["topic"] == "ui"
                     ws_send(socket, json_encode({"t": "show", "ref": ev["data"]["ref"]}))
                 otherwise when ev != nothing

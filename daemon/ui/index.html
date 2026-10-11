@@ -14,12 +14,12 @@
   <aside id="side">
     <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
 
-    <div class="label">spaces</div>
+    <div class="label">spaces <span id="machine" class="muted"></span></div>
     <ul id="spaces"></ul>
 
     <div class="row">
-      <button id="new" class="link" title="Nueva terminal (Ctrl+Shift+T)">new</button>
-      <button id="find" class="link" title="Buscar sesión (Ctrl+K)">find</button>
+      <button id="new" class="link" title="Nuevo space: una carpeta de trabajo">new</button>
+      <button id="find" class="link" title="Buscar cualquier sesión (Ctrl+Shift+K)">find</button>
     </div>
 
     <div class="label">agents <span id="count" class="muted"></span></div>
@@ -32,8 +32,8 @@
     <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><button id="plus" title="Nueva terminal">+</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
-        <p>Ninguna terminal abierta.</p>
-        <p class="muted">Abrí una con <kbd>+</kbd>, o elegí una sesión viva de la izquierda.<br>Cerrar una pestaña no mata el programa: sigue corriendo y la retomás cuando quieras.</p>
+        <p id="empty-title">Este space no tiene terminales.</p>
+        <p class="muted">Abrí una con <kbd>+</kbd>. Cerrar una pestaña no mata el programa: sigue corriendo<br>y la encontrás en <b>agents</b> o con <b>find</b>.</p>
       </div>
     </section>
     <div id="keys" class="only-touch">
@@ -56,6 +56,8 @@
   <button data-a="kill" class="danger">Matar proceso</button>
   <button data-a="restart">Reiniciar</button>
   <button data-a="remove">Quitar de la lista</button>
+  <button data-a="newtab" data-for="space">Nueva terminal acá</button>
+  <button data-a="forget" data-for="space">Olvidar este space</button>
 </div>
 
 <script src="vendor/xterm.min.js"></script>
