@@ -20,7 +20,7 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 - [x] Local-only security model (see [SECURITY.md](SECURITY.md))
 - [x] Installers: Windows (Start menu, PATH, daemon at sign-in) and Linux/macOS (systemd user service)
 - [ ] Installable PWA, `.msi`/`.dmg`, signed binaries, smaller executables
-- [ ] `atr attach` inside your current terminal
+- [x] `atr attach` inside your current terminal, and `atr top`: every session, live, in the terminal
 - [x] Other machines through SSH: `user@host`, the password once, a link that reopens by itself
 - [ ] Other machines without SSH, through an end-to-end encrypted relay (v0.3)
 - [ ] Phone: key bar is there; push when an agent needs you (v0.3)
@@ -39,6 +39,10 @@ entry) in `%LOCALAPPDATA%\Atril`, puts `atr` on your PATH, adds **Atril** to the
 starts the daemon when you sign in. No admin.
 `install.ps1 -Uninstall` removes it.
 
+To publish a version: `.\release.ps1 -Title "…"` builds, zips `dist\` with the installer
+(`atril-<version>-windows-x64.zip`, with **Instalar Atril.cmd** inside) and creates the GitHub release
+`v<version>`; the site, [its site](https://synsema.github.io/atril/), shows it by itself. `-DryRun` only builds the zip.
+
 **Linux / macOS / a server**:
 
 ```sh
@@ -50,7 +54,10 @@ starts the daemon when you sign in. No admin.
 ```sh
 atr claude                     # Claude Code in a new session here, in this terminal (SSH too);
                                # Ctrl+] lets go of it and it keeps running; the app shows it
-atr attach <session>           # back into it, from any terminal
+atr attach <session>           # back into it, from any terminal (without a session: the only one
+                               # running, or the list to choose)
+atr top                        # every session of this machine, live, in this terminal: ↑↓ choose,
+                               # Enter goes in, Ctrl+] back to the list, n new shell, x ends one
 atr run --name review claude   # a session running Claude Code
 atr name 2 "migración de la base"   # a title for a session, to remember it and find it
 atr run                        # your shell
@@ -65,6 +72,9 @@ port, if it is not 22). If the server has no Atril yet, the dialog offers to ins
 the engine, in that user's `~/.local`, no root. If it asks for the password, it is used once to leave Atril's
 own SSH key there and is not kept. The server shows up in the sidebar with its spaces and agents,
 and the link stays open and reopens by itself (see [SECURITY.md](SECURITY.md)).
+
+On the server itself, `atr top` (or plain `atr`, which shows it when there is no screen) lists its
+sessions live and lets you go into any of them.
 
 Without a window on your side, the old way still works (the daemon only listens on the server's
 127.0.0.1):
@@ -106,6 +116,18 @@ connect another); a **space** is a folder (with its git branch), its **tabs** ar
 there (+ asks for an optional title; double-click a tab to change it), and **agents** lists only
 agents, from every space of every machine, plus the agents that run **outside Atril** (seen, not
 attachable: start them with `atr claude` to have them). **new** opens a picker with your recent repositories and a folder browser.
+
+**archivos** (Ctrl+Shift+E) opens a panel on the right with the files of the space on screen: what git
+sees changed (modified, new, deleted) listed first, then the tree with the same colors. A click opens
+the file with its colors, or its diff since the last commit; it updates by itself while an agent writes.
+Read only, and only inside your spaces; it works on the other machines too (with this version of Atril there).
+It floats over the terminal (a program that lays itself out by width, like OpenCode, keeps its layout);
+**fijar** docks it beside the terminal instead.
+
+**◐ tema**, at the bottom of the sidebar: dark, light, paper, high contrast, or yours, and either one
+always or one for the day and one for the night (by the system's setting or by the hour). A theme is a
+JSON file: put yours in `~/.atril/themes/`; [src/ui/themes/README.md](src/ui/themes/README.md) explains
+every color, the terminal's and the selection's included.
 
 ## License
 

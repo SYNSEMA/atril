@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atril — la terminal para agentes de código</title>
+<meta name="description" content="Atril corre Claude Code, Codex, OpenCode y Gemini en todas tus máquinas, en una sola ventana. Cerrar la pestaña no mata nada: cada sesión sigue viva hasta que termina. Gratis y de código abierto.">
+<link rel="canonical" href="https://synsema.github.io/atril/">
+<meta name="theme-color" content="#03100a">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="index, follow">
+
+<!-- tarjetas para redes (Open Graph y X) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Atril">
+<meta property="og:locale" content="es_LA">
+<meta property="og:url" content="https://synsema.github.io/atril/">
+<meta property="og:title" content="Atril — Cerrar la pestaña no mata nada">
+<meta property="og:description" content="La terminal para agentes de código: tus sesiones de Claude Code, Codex, OpenCode y Gemini, vivas en todas tus máquinas.">
+<meta property="og:image" content="https://synsema.github.io/atril/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Atril: Cerrar la pestaña no mata nada.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Atril — Cerrar la pestaña no mata nada">
+<meta name="twitter:description" content="La terminal para agentes de código, en todas tus máquinas.">
+<meta name="twitter:image" content="https://synsema.github.io/atril/og.png">
+
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://api.github.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700&family=VT323&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Atril",
+  "url": "https://synsema.github.io/atril/",
+  "description": "La terminal para agentes de código: sesiones de Claude Code, Codex, OpenCode y Gemini que siguen vivas en todas tus máquinas aunque cierres la pestaña.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows 10, Windows 11, Linux",
+  "softwareVersion": "0.3.0",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "downloadUrl": "https://github.com/SYNSEMA/atril/releases/latest",
+  "codeRepository": "https://github.com/SYNSEMA/atril",
+  "image": "https://synsema.github.io/atril/og.png",
+  "author": { "@type": "Organization", "name": "Synsema", "url": "https://synsema.dev" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "¿Qué pasa con mi agente si cierro la pestaña?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Sigue corriendo. Cada sesión vive en el daemon de Atril hasta que termina, la terminás con Ctrl-C adentro o la cerrás a propósito. La volvés a abrir desde la ventana o con atr attach." } },
+    { "@type": "Question", "name": "¿Qué agentes funcionan con Atril?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Cualquier programa de terminal: Claude Code, Codex, OpenCode, Gemini, Aider, Goose y también tu shell. Atril reconoce a los agentes y muestra si están trabajando, si te necesitan o si terminaron." } },
+    { "@type": "Question", "name": "¿Puedo usarlo con mis servidores?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Sí. Agregás user@host y la contraseña una sola vez; Atril deja su propia llave SSH y el servidor aparece en la barra lateral con sus agentes." } },
+    { "@type": "Question", "name": "¿Atril manda mis datos a algún lado?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. El daemon escucha solo en 127.0.0.1, con una clave por máquina. No hay cuentas ni telemetría." } }
+  ]
+}
+</script>
+</head>
+<body>
+
+<!-- la pantalla: un monitor de fósforo verde -->
+<header class="sky">
+  <nav class="nav" aria-label="Principal">
+    <a class="chip brand" href="./">Atril</a>
+    <div class="mid">
+      <a class="chip" href="#como">Cómo funciona</a>
+      <a class="chip" href="#bajar">Bajar</a>
+      <a class="chip" href="https://github.com/SYNSEMA/atril#readme">Docs</a>
+      <a class="chip" href="https://synsema.dev">Synsema</a>
+    </div>
+    <div class="end">
+      <a class="chip" href="https://github.com/SYNSEMA/atril" id="stars">★ GitHub</a>
+      <a class="chip dark" href="#bajar">Bajar Atril</a>
+    </div>
+  </nav>
+
+  <!-- la primera pantalla: las terminales que rotan a la izquierda, el titular a la derecha -->
+  <div class="stage">
+    <!-- una sola ventana que rota: las novedades (de la última versión publicada) y tres terminales -->
+    <div class="rotor" aria-label="Novedades y ejemplos de Atril">
+      <div class="win slide news">
+        <div class="wt"><span id="rel-date">oct 2026</span> ▪ Atril <span id="rel-ver">0.3</span></div>
+        <div class="wb"><div><span id="rel-title">Panel de archivos, diffs<br>y temas de día y de noche ☀</span><br><a href="https://github.com/SYNSEMA/atril/releases" id="rel-link">Ver novedades</a></div></div>
+      </div>
+      <div class="win slide" aria-hidden="true">
+        <div class="wt">atril.syn</div>
+<pre class="wb"><b>intent</b>: "la terminal para agentes"
+
+<b>agent</b> Atril
+    <b>each</b> sesion <b>in</b> maquinas()
+        mantener_viva(sesion)</pre>
+      </div>
+      <div class="win slide" aria-hidden="true">
+        <div class="wt">~/api ▪ atr ls</div>
+<pre class="wb">$ atr ls
+s1  claude    <mark class="c">trabajando</mark>   2h
+s2  codex     <mark class="y">te necesita</mark>  40m
+s3  opencode  <mark class="g">terminó</mark>      1d
+$ █</pre>
+      </div>
+      <div class="win slide" aria-hidden="true">
+        <div class="wt">servidor ▪ atr claude</div>
+<pre class="wb">$ atr claude
+● Migrando la base…
+<i>[ Ctrl+] ]</i>
+atril: soltaste s1 y sigue corriendo
+$ █</pre>
+      </div>
+    </div>
+    <h1 class="huge">Cerrar la pestaña<br>no mata nada.</h1>
+  </div>
+</header>
+
+<main>
+<!-- debajo de la primera pantalla: qué es y la descarga -->
+<section class="lede">
+  <p class="vert" aria-hidden="true">atr claude ▪ atr top ▪ atr attach ▪ Ctrl+] ▪</p>
+  <p class="sub">
+    Claude Code, Codex, OpenCode y Gemini corriendo en todas tus máquinas, en una sola ventana.
+    Cada sesión vive en el daemon de Atril hasta que termina o la terminás vos.
+  </p>
+  <div class="cta" id="bajar">
+    <a class="chip dark big" id="dl-windows" href="https://github.com/SYNSEMA/atril/releases/latest">Bajar para Windows</a>
+    <a class="chip big" id="dl-linux" href="https://github.com/SYNSEMA/atril#install">Linux</a>
+    <a class="chip big off" id="dl-macos" aria-disabled="true">macOS · pronto</a>
+  </div>
+  <p class="count"><span id="dl-count"></span>gratis ▪ Apache-2.0 ▪ sin cuentas</p>
+  <p class="how" id="how">
+    Windows 10 y 11: descomprimí el .zip y abrí <b>Instalar Atril</b>. Queda en el menú Inicio, sin permisos de administrador.
+  </p>
+
+  <!-- la app de verdad -->
+  <figure class="win shot">
+    <figcaption class="wt">Atril ▪ tema claro ▪ panel de archivos abierto</figcaption>
+    <img src="img/atril-app.png" width="1743" height="902" alt="La ventana de Atril: dispositivos, spaces y agentes a la izquierda, un agente en la terminal del centro y los archivos del proyecto a la derecha" loading="lazy">
+  </figure>
+</section>
+
+<!-- la comparación, en verde flúor con puntos -->
+<section class="fluor" id="como" aria-labelledby="como-h">
+  <h2 id="como-h" class="sr-only">Cómo funciona: qué pasa al cerrar la pestaña</h2>
+  <div class="dotted">
+    <span class="tag" aria-hidden="true">Cerrar la pestaña</span>
+    <div class="pair">
+      <div class="win term">
+        <div class="wt">Atril</div>
+        <div class="wb rows"><b>$ atr claude</b>
+Claude Code en la sesión s1 ▪ Ctrl+] la suelta
+
+<i>[ cerraste la pestaña ]</i>
+
+<b>$ atr ls</b>
+ID    NAME       STATE        AGE
+s1    claude     trabajando   2h
+s2    codex      te necesita  40m
+s3    pwsh       inactiva     1d
+
+<b>$ atr attach s1</b>
+● Listo. Los 214 tests pasan.</div>
+      </div>
+      <div class="win term gray">
+        <div class="wt">Otra terminal</div>
+        <div class="wb rows"><b>$ claude</b>
+Claude Code ▪ trabajando en la migración…
+
+<i>[ cerraste la pestaña ]</i>
+
+
+
+[proceso terminado con código 1]</div>
+      </div>
+    </div>
+  </div>
+  <div class="legend">
+    <span>Atril</span>
+    <span>la sesión sigue en el daemon</span>
+    <span>Otra terminal</span>
+    <span>el agente muere con la ventana</span>
+  </div>
+</section>
+
+<!-- lo que trae -->
+<section class="feats" id="novedades">
+  <h2 class="mid-h">Lo que trae</h2>
+  <div class="grid">
+    <div class="win"><h3 class="wt">Estados</h3><div class="wb">Una barra lateral con cada sesión: <mark class="y">te necesita</mark>, <mark class="c">trabajando</mark>, <mark class="g">terminó</mark>.</div></div>
+    <div class="win"><h3 class="wt">Máquinas</h3><div class="wb"><tt>user@host</tt> y la contraseña una sola vez. El servidor aparece en la barra con sus agentes.</div></div>
+    <div class="win"><h3 class="wt">Archivos</h3><div class="wb">Qué cambió el agente, el archivo con colores y su diff, al costado de la terminal.</div></div>
+    <div class="win"><h3 class="wt">Temas</h3><div class="wb">Oscuro, claro, papel, alto contraste o el tuyo en un JSON. Cambia solo con la hora.</div></div>
+    <div class="win"><h3 class="wt">atr top</h3><div class="wb">Por SSH, sin ventana: todas las sesiones en vivo, Enter para entrar.</div></div>
+    <div class="win"><h3 class="wt">Local</h3><div class="wb">Escucha solo en 127.0.0.1, con una clave por máquina. Sin cuentas ni telemetría.</div></div>
+  </div>
+</section>
+
+<!-- preguntas -->
+<section class="faq" id="preguntas">
+  <h2 class="mid-h">Preguntas</h2>
+  <details open><summary>¿Qué pasa con mi agente si cierro la pestaña?</summary>
+    <p>Sigue corriendo. Cada sesión vive en el daemon de Atril hasta que termina, la terminás con Ctrl-C adentro o la cerrás a propósito. La volvés a abrir desde la ventana o con <tt>atr attach</tt>.</p></details>
+  <details><summary>¿Qué agentes funcionan con Atril?</summary>
+    <p>Cualquier programa de terminal: Claude Code, Codex, OpenCode, Gemini, Aider, Goose y también tu shell. Atril reconoce a los agentes y muestra si están trabajando, si te necesitan o si terminaron.</p></details>
+  <details><summary>¿Puedo usarlo con mis servidores?</summary>
+    <p>Sí. Agregás <tt>user@host</tt> y la contraseña una sola vez; Atril deja su propia llave SSH y el servidor aparece en la barra lateral con sus agentes.</p></details>
+  <details><summary>¿Atril manda mis datos a algún lado?</summary>
+    <p>No. El daemon escucha solo en 127.0.0.1, con una clave por máquina. No hay cuentas ni telemetría.</p></details>
+</section>
+</main>
+
+<footer class="foot">
+  <span>© <span id="year">2026</span> Atril ▪ hecho con <a href="https://synsema.dev">Synsema</a></span>
+  <span><a href="https://github.com/SYNSEMA/atril">GitHub</a> ▪ <a href="https://github.com/SYNSEMA/atril/issues">Issues</a> ▪ Apache-2.0</span>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>
