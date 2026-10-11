@@ -468,11 +468,29 @@ task ssh_opts(m)
         "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
         "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]
 
+-- a program run to its end without a window. On Windows this daemon has no console, and a console
+-- program it starts with pipes gets a console window of its own (ssh.exe popping up); in a
+-- pseudo-terminal it has none. Gives {exit_code, out}: what it printed, stdout and stderr together
+task run_quiet(cmd, args, timeout)
+    let p be proc_spawn(cmd, args, {"pty": true, "cols": 4000, "rows": 50})
+    let out be ""
+    let code be nothing
+    let deadline be now() + timeout
+    while code == nothing and now() < deadline
+        let ev be proc_recv(p, 1)
+        when ev != nothing
+            when ev["type"] == "exit"
+                set code to ev["data"]["exit_code"]
+            otherwise
+                set out to out + ev["data"]
+    proc_close(p)
+    give {"exit_code": (when code == nothing then -1 otherwise code), "out": strip_ansi(out)}
+
 -- Atril's key pair, made the first time; gives the public half
 task ensure_key()
     when not file_info(SSH_KEY)["exists"]
         write_file("~/.atril/ssh/README", "Atril's own SSH key. Its public half is in the authorized_keys of the machines you connected.\n")
-        run(ssh_tool("ssh-keygen"), ["-q", "-t", "ed25519", "-N", "", "-C", "atril@" + MACHINE, "-f", SSH_KEY], 30)
+        run_quiet(ssh_tool("ssh-keygen"), ["-q", "-t", "ed25519", "-N", "", "-C", "atril@" + MACHINE, "-f", SSH_KEY], 30)
     give trim(read_file(SSH_KEY + ".pub"))
 
 -- the line a machine runs to accept Atril's key (once, idempotent)
@@ -481,18 +499,19 @@ task add_key_cmd(pub)
 
 task try_batch(m)
     try
-        let r be run(ssh_tool("ssh"), ssh_opts(m) + [m["target"], "echo atril-ok"], 25)
-        give contains(r["stdout"], "atril-ok")
+        let r be run_quiet(ssh_tool("ssh"), ssh_opts(m) + [m["target"], "echo atril-ok"], 25)
+        give contains(r["out"], "atril-ok")
     recover e
         give false
 
 -- the other daemon running, and its key: {ok, conf} or {ok: false, error}
 task remote_up(m)
     try
-        let r be run(ssh_tool("ssh"), ssh_opts(m) + [m["target"], REMOTE_UP], 40)
-        let conf be json_decode(trim(r["stdout"]), nothing)
+        let r be run_quiet(ssh_tool("ssh"), ssh_opts(m) + [m["target"], REMOTE_UP], 40)
+        let found be regex_capture(r["out"], "(\\{[^\r\n]*\\})")
+        let conf be when found == nothing then nothing otherwise json_decode(found[0], nothing)
         when r["exit_code"] != 0 or conf == nothing or type_of(conf) != "map" or get(conf, "token") == nothing
-            give {"ok": false, "error": trim(r["stderr"] + " " + r["stdout"])}
+            give {"ok": false, "error": trim(r["out"])}
         give {"ok": true, "conf": conf}
     recover e
         give {"ok": false, "error": text(e)}
@@ -549,7 +568,7 @@ agent Link
                     let key be up["conf"]["token"]
                     state_set("mkey:" + mid, key)
                     let lp be m["local_port"]
-                    let t be proc_spawn(ssh_tool("ssh"), ssh_opts(m) + ["-N", "-o", "ExitOnForwardFailure=yes", "-L", text(lp) + ":127.0.0.1:7171", m["target"]], {"stderr": "merge"})
+                    let t be proc_spawn(ssh_tool("ssh"), ssh_opts(m) + ["-N", "-o", "ExitOnForwardFailure=yes", "-L", text(lp) + ":127.0.0.1:7171", m["target"]], {"pty": true, "cols": 400, "rows": 20})
                     let ready be false
                     let tries be 0
                     while not ready and tries < 30 and proc_status(t) == "running"
@@ -654,6 +673,57 @@ task password_once(sock, m, pub)
     proc_close(p)
     give "Tiempo agotado esperando la contraseña."
 
+-- ---- installing Atril on a machine that has none, through the SSH link
+--
+-- The sources travel from this computer, not from the internet (the repository may be private, the
+-- machine may not reach GitHub): ssh -R gives that machine a port on its own 127.0.0.1 that leads
+-- here, and its curl fetches each file with a key made for this one install. The engine comes from
+-- its official installer when the machine has none. Then the machine runs install.sh, as a person would.
+
+let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/app.css", "ui/icon.svg",
+    "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js"]
+
+task install_script(port, key)
+    let fetch_each be "for f in " + join(SOURCES, " ") + "; do curl -fsS -H 'Authorization: Bearer " + key + "' \"http://127.0.0.1:" + text(port) + "/api/source/$f\" -o \"$D/$f\"; done; "
+    give join([
+        "set -e; export PATH=\"$HOME/.local/bin:$PATH\"; ",
+        "command -v curl >/dev/null 2>&1 || { echo 'ATRIL-FAIL esa máquina no tiene curl: instalalo y volvé a conectar'; exit 3; }; ",
+        "if ! command -v synsema >/dev/null 2>&1; then echo 'ATRIL-STEP Instalando el motor de Synsema'; curl -fsSL https://synsema.com/install.sh | sh; fi; ",
+        "D=\"$HOME/.atril/src\"; rm -rf \"$D\"; mkdir -p \"$D/ui/vendor\"; ",
+        "echo 'ATRIL-STEP Copiando Atril desde esta computadora'; " + fetch_each,
+        "echo 'ATRIL-STEP Compilando e instalando Atril (uno o dos minutos)'; cd \"$D\" && sh install.sh; echo ATRIL-INSTALL-OK"], "")
+
+-- gives nothing when Atril got installed, else what went wrong
+task install_remote(sock, m)
+    let key be token(24)
+    let port be 20000 + floor(random() * 30000)
+    state_set("install_key", key)
+    let p be proc_spawn(ssh_tool("ssh"), ssh_opts(m) + ["-o", "ExitOnForwardFailure=yes", "-R", text(port) + ":127.0.0.1:" + text(PORT), m["target"], install_script(port, key)],
+        {"pty": true, "cols": 400, "rows": 50})
+    let out be ""
+    let told be 0
+    let code be nothing
+    let deadline be now() + 900
+    while code == nothing and now() < deadline
+        let ev be proc_recv(p, 2)
+        when ev != nothing
+            when ev["type"] == "exit"
+                set code to ev["data"]["exit_code"]
+            otherwise
+                set out to out + strip_ansi(ev["data"])
+                let steps be regex_find_all(out, "ATRIL-STEP [^\r\n]*")
+                while told < length(steps)
+                    tell(sock, replace(steps[told], "ATRIL-STEP ", ""))
+                    set told to told + 1
+    proc_close(p)
+    state_delete("install_key")
+    when contains(out, "ATRIL-INSTALL-OK")
+        give nothing
+    let failed be regex_capture(out, "ATRIL-FAIL ([^\r\n]*)")
+    when failed != nothing
+        give failed[0]
+    give "La instalación no terminó: " + slice(trim(regex_replace(out, "\\s+", " ")), -400)
+
 -- "Conectar máquina": from user@host to a link that stays open. Gives {ok, id, name} or {error}
 task connect_flow(sock, req)
     let target be trim(text(get(req, "target", "")))
@@ -673,13 +743,13 @@ task connect_flow(sock, req)
         -- your own SSH setup (a key, an agent) may already open the door: then it leaves Atril's key
         let own be nothing
         try
-            set own to run(ssh_tool("ssh"), ["-p", text(port), "-o", "BatchMode=yes", "-o", "UserKnownHostsFile=" + SSH_KNOWN,
+            set own to run_quiet(ssh_tool("ssh"), ["-p", text(port), "-o", "BatchMode=yes", "-o", "UserKnownHostsFile=" + SSH_KNOWN,
                 "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", target, add_key_cmd(pub)], 30)
         recover e
-            set own to {"stdout": "", "stderr": text(e)}
-        when not contains(own["stdout"], "ATRIL-KEY-OK")
-            when regex_find_all(own["stderr"], "(Could not resolve|Connection refused|timed out|No route to host)")
-                give {"error": "No llego a " + target + ": " + trim(own["stderr"])}
+            set own to {"out": text(e)}
+        when not contains(own["out"], "ATRIL-KEY-OK")
+            when regex_find_all(own["out"], "(Could not resolve|Connection refused|timed out|No route to host)")
+                give {"error": "No llego a " + target + ": " + trim(own["out"])}
             tell(sock, "Esta máquina pide contraseña: la uso una sola vez, para dejar la llave de Atril. No se guarda.")
             let res be password_once(sock, m, pub)
             when res != nothing
@@ -690,7 +760,19 @@ task connect_flow(sock, req)
     tell(sock, "Buscando Atril en esa máquina")
     let up be remote_up(m)
     when not up["ok"]
-        give {"error": "Entré, pero Atril no está instalado ahí o no arranca. Instalalo con install.sh y volvé a conectar. (" + slice(text(up["error"]), 0, 300) + ")"}
+        -- not there (or not starting): offer to install it, through this same link
+        ws_send(sock, json_encode({"t": "ask", "what": "install", "msg": "Atril no está instalado en " + target + ". ¿Lo instalo? Va en ese usuario (~/.local), sin root; trae el motor de Synsema si falta. Tarda uno o dos minutos."}))
+        let answer be ws_recv(sock, 900)
+        let said be when answer == nothing or answer["type"] != "text" then nothing otherwise json_decode(answer["data"], nothing)
+        when type_of(said) != "map" or get(said, "install") != true
+            give {"error": "Sin Atril en esa máquina no hay sesiones que sobrevivan al corte. Cuando quieras, conectala de nuevo y elegí instalar."}
+        let failed be install_remote(sock, m)
+        when failed != nothing
+            give {"error": failed}
+        tell(sock, "Atril instalado. Arrancándolo")
+        set up to remote_up(m)
+        when not up["ok"]
+            give {"error": "Se instaló, pero no arranca: " + slice(text(up["error"]), 0, 300)}
     let list be load_machines()
     let used be apply(list, (x) => x["local_port"])
     let lp be 7301
@@ -907,6 +989,18 @@ serve on 7171
 
     route "DELETE /api/m/:mid/*rest" requires auth
         give proxy_http(params.mid, "DELETE", params.rest, nothing, nothing)
+
+    -- the sources, for a machine installing Atril through `ssh -R` (see install_remote): only with the
+    -- key of an install in progress, only from this machine's loopback, only the files in SOURCES
+    route "GET /api/source/*path"
+        let key be state_get("install_key")
+        let h be text(get(request.headers, "authorization", ""))
+        let host be text(get(request.headers, "host", ""))
+        when key == nothing or not constant_time_eq(h, "Bearer " + key) or not regex_find_all(host, "^(127\\.0\\.0\\.1|localhost)(:[0-9]+)?$")
+            give fail(401, "unauthorized")
+        when params.path not in SOURCES
+            give not_found("no such file")
+        give respond(read_file(params.path), "text/plain")
 
     route "GET /api/info" requires auth
         give {"machine": MACHINE, "os": platform()["os"], "version": "0.1.0"}

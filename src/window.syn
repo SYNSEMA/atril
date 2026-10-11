@@ -3,14 +3,26 @@
 -- Needs exec("powershell") on Windows, exec("open") on macOS, exec("xdg-open") on Linux, declared
 -- by the program that uses it.
 
+-- a command to its end, in a pseudo-terminal: started by the console-less daemon it would otherwise
+-- flash a console window of its own. Gives its exit code
+task quietly(cmd, args)
+    let p be proc_spawn(cmd, args, {"pty": true})
+    let code be nothing
+    let tries be 0
+    while code == nothing and tries < 30
+        let ev be proc_recv(p, 1)
+        when ev != nothing and ev["type"] == "exit"
+            set code to ev["data"]["exit_code"]
+        set tries to tries + 1
+    proc_close(p)
+    give when code == nothing then -1 otherwise code
+
 export task open_url(url)
     let os be platform()["os"]
     let safe be replace(url, "'", "''")
     when os == "windows"
-        try
-            run("powershell", ["-NoProfile", "-Command", "Start-Process msedge -ArgumentList '--app=" + safe + "'"])
-        recover e
-            run("powershell", ["-NoProfile", "-Command", "Start-Process '" + safe + "'"])
+        when quietly("powershell", ["-NoProfile", "-Command", "Start-Process msedge -ArgumentList '--app=" + safe + "'"]) != 0
+            quietly("powershell", ["-NoProfile", "-Command", "Start-Process '" + safe + "'"])
     otherwise when os == "macos"
         try
             run("open", ["-na", "Google Chrome", "--args", "--app=" + url])

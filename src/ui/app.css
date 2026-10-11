@@ -136,6 +136,11 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #clog li { padding: 3px 0; color: var(--muted); }
 #clog li.ok { color: var(--ok); }
 #clog li.err { color: var(--warn); }
+#cinstall { padding: 6px 14px 10px; }
+#cinstall p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
+#cinstall .row-btns { display: flex; gap: 8px; justify-content: flex-end; }
+#cinstall button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; }
+#cinstall .primary { background: var(--accent); color: #0b0b10; font-weight: 700; border-color: var(--accent); }
 #cpass { display: flex; gap: 8px; align-items: center; padding: 10px 14px; }
 #cpass label { font-size: 13px; color: var(--text); }
 #cpass input { flex: 1; }

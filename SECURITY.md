@@ -41,6 +41,11 @@ still listens on its own 127.0.0.1, and this computer reaches it through an SSH 
   longer each time up to 30 s. Tested: a server restart comes back in ~4 s; a frozen server is noticed
   in under a minute and comes back seconds after it answers again.
 - **The other daemon's key** is read through SSH each time the link opens and kept in memory only.
+- **Installing Atril on a machine that has none** (when you accept it in the dialog): the sources go
+  from this computer to that machine, not from the internet. `ssh -R` gives the machine a port on
+  its own 127.0.0.1 that leads to this daemon, and its `curl` fetches each file of a fixed list with
+  a key made for that one install and dropped when it ends; the route answers nothing else, and
+  nothing without that key. The Synsema engine comes from its official installer when it is missing.
 - **Whoever can open the window of this computer can use the connected machines.** That is the same
   key as before (127.0.0.1, the token in `~/.atril/daemon.json`). Disconnecting a machine forgets it
   here; to cut Atril out of it entirely, remove the `atril@…` line from its `authorized_keys`.

@@ -57,8 +57,9 @@ atr kill review                # end the program
 atr down                       # stop the daemon and every session
 ```
 
-**A server, in the same window**: install Atril there (`./install.sh`), then on your computer
-**+ conectar máquina** → `user@ip`. If it asks for the password, it is used once to leave Atril's
+**A server, in the same window**: on your computer, **+ conectar máquina** → `user@ip` (and the
+port, if it is not 22). If the server has no Atril yet, the dialog offers to install it there, with
+the engine, in that user's `~/.local`, no root. If it asks for the password, it is used once to leave Atril's
 own SSH key there and is not kept. The server shows up in the sidebar with its spaces and agents,
 and the link stays open and reopens by itself (see [SECURITY.md](SECURITY.md)).
 

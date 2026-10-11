@@ -622,6 +622,7 @@ function openConnect() {
   $("#conn").hidden = false;
   $("#clog").innerHTML = "";
   $("#cpass").hidden = true;
+  $("#cinstall").hidden = true;
   $("#cgo").hidden = false;
   $("#cgo").disabled = false;
   $("#ctarget").focus();
@@ -648,7 +649,11 @@ function startConnect() {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.t === "step") logLine(m.msg);
-    else if (m.t === "ask") {
+    else if (m.t === "ask" && m.what === "install") {
+      $("#cinstallmsg").textContent = m.msg;
+      $("#cinstall").hidden = false;
+      $("#cyes").focus();
+    } else if (m.t === "ask") {
       if (m.retry) logLine(m.msg, "err");
       $("#cpasslabel").textContent = m.msg;
       $("#cpass").hidden = false;
@@ -656,6 +661,7 @@ function startConnect() {
       $("#cpw").focus();
     } else if (m.t === "done") {
       $("#cpass").hidden = true;
+      $("#cinstall").hidden = true;
       const r = m.result || {};
       if (r.ok) {
         logLine(`Listo: ${r.name} queda conectada y se reconecta sola.`, "ok");
@@ -676,6 +682,13 @@ $("#cpass").onsubmit = (e) => {
   $("#cpw").value = "";   // not kept here either
   $("#cpass").hidden = true;
 };
+function answerInstall(yes) {
+  $("#cinstall").hidden = true;
+  if (connWs) connWs.send(JSON.stringify({ install: yes }));
+  if (yes) logLine("Instalando… (no cierres esta ventana)");
+}
+$("#cyes").onclick = () => answerInstall(true);
+$("#cno").onclick = () => answerInstall(false);
 $("#cgo").onclick = startConnect;
 $("#ccancel").onclick = closeConnect;
 $("#ctarget").onkeydown = (e) => { if (e.key === "Enter") startConnect(); };
