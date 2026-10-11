@@ -477,7 +477,7 @@ function makeTerm(s) {
   terms.set(s.key, t);
   connect(s, t);
   term.onData((d) => {
-    if (t.ended) return;
+    if (t.ended || t.replaying) return;
     if (t.ctrl && d.length === 1) { d = String.fromCharCode(d.toUpperCase().charCodeAt(0) & 31); setCtrl(t, false); }
     send(t, { t: "i", d });
   });
@@ -495,11 +495,19 @@ function makeTerm(s) {
 function connect(s, t) {
   const ws = new WebSocket(WS + base(s.mid) + "/sessions/" + encodeURIComponent(s.id) + "/attach");
   t.ws = ws;
+  // the first output is the history being replayed: queries in it ("what terminal are you?") would be
+  // answered again by xterm.js and typed into the program (a stray "1;2c"), so answers are dropped
+  // until it is drawn
+  t.replaying = true;
+  let first = true;
   ws.onopen = () => { t.fit.fit(); send(t, { t: "r", cols: t.term.cols, rows: t.term.rows }); };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.t === "o") t.term.write(m.d);
-    else if (m.t === "exit") {
+    if (m.t === "o") {
+      if (first) { first = false; t.term.write(m.d, () => { t.replaying = false; }); }
+      else t.term.write(m.d);
+    } else if (m.t === "exit") {
+      t.replaying = false;
       if (t.ended) return;
       t.ended = true;
       const cur = sessions.get(s.key) || s;
@@ -838,6 +846,31 @@ Sólo deja de aparecer acá: la carpeta no se toca.`,
   if (current === sp.sid) { current = null; store.set("space2", null); }
   spacesBy[sp.mid] = (spacesBy[sp.mid] || []).filter((x) => x.key !== sp.key);
   renderSide();
+}
+
+// install this computer's Atril on a connected machine again; the dialog of "connect" shows the steps
+async function updateMachine(mm) {
+  const ok = await ask(`¿Actualizar Atril en ${machineName(mm)} a la versión de esta computadora (${myVersion})?\nLo que corre en Atril allá se cierra; los spaces quedan.`,
+    [{ label: "Cancelar", value: false }, { label: "Actualizar", value: true, kind: "primary" }]);
+  if (!ok) return;
+  openConnect();
+  $("#cgo").hidden = true;
+  working(true);
+  logLine(`Actualizando Atril en ${machineName(mm)}…`);
+  const ws = new WebSocket(WS + `/api/machines/${encodeURIComponent(mm.mid)}/update`);
+  connWs = ws;
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === "step") logLine(m.msg);
+    else if (m.t === "done") {
+      working(false);
+      const r = m.result || {};
+      if (r.ok) { logLine("Listo: actualizado. Reconectando.", "ok"); setTimeout(closeConnect, 1500); }
+      else logLine(r.error || "No se pudo actualizar.", "err");
+      connWs = null;
+    }
+  };
+  ws.onclose = () => { if (connWs === ws) { logLine("Se cortó la conexión con Atril.", "err"); working(false); connWs = null; } };
 }
 
 // ---- context menus
