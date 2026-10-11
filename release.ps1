@@ -27,7 +27,7 @@ $stage = Join-Path $out $name
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage "dist") | Out-Null
 Copy-Item (Join-Path $root "dist\atr.exe"), (Join-Path $root "dist\atrild.exe") (Join-Path $stage "dist")
-Copy-Item (Join-Path $root "install.ps1"), (Join-Path $root "LICENSE") $stage
+Copy-Item (Join-Path $root "install.ps1"), (Join-Path $root "LICENSE"), (Join-Path $root "NOTICE"), (Join-Path $root "THIRD_PARTY_NOTICES.md") $stage
 Set-Content -Path (Join-Path $stage "Instalar Atril.cmd") -Encoding ASCII -Value @(
     "@echo off",
     "powershell -NoProfile -ExecutionPolicy Bypass -File ""%~dp0install.ps1""",

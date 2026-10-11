@@ -27,7 +27,17 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 
 ## Install
 
-**Windows** (from this checkout, with the Synsema engine v0.6.44+ to build):
+**Windows 10 / 11**, the newest release, from PowerShell (no admin, and no SmartScreen warnings: files
+PowerShell downloads carry no "from the internet" mark):
+
+```powershell
+irm https://synsema.github.io/atril/install.ps1 | iex
+```
+
+Or download `atril-<version>-windows-x64.zip` from [Releases](https://github.com/SYNSEMA/atril/releases),
+unzip it and open **Instalar Atril**.
+
+**Windows, from this checkout** (with the Synsema engine v0.6.44+ to build):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1
@@ -131,4 +141,5 @@ every color, the terminal's and the selection's included.
 
 ## License
 
-Apache-2.0. The future relay will be AGPL-3.0.
+Apache-2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE)); third-party software in the window:
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The future relay will be AGPL-3.0.

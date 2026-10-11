@@ -1,0 +1,7 @@
+Atril
+Copyright 2026 Synsema
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The executables are built with the Synsema engine (https://synsema.dev), and the window includes
+third-party software under its own licenses: see THIRD_PARTY_NOTICES.md.

@@ -33,7 +33,8 @@ touches `site/`: <https://synsema.github.io/atril/>. The 404 page uses absolute 
 ```
 index.html        the page (SEO in <head>: description, canonical, Open Graph, JSON-LD)
 style.css         the look: green phosphor screen, white chips, classic Mac windows
-site.js           the live data from GitHub
+site.js           the live data from GitHub, and the copy button
+install.ps1       the installer from the terminal: irm https://synsema.github.io/atril/install.ps1 | iex
 404.html          a page that is not there
 og.png            the card when the link is shared (1200×630)
 favicon.svg, favicon-32.png, apple-touch-icon.png

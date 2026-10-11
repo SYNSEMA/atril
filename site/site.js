@@ -10,6 +10,15 @@
   var HOUR = 3600000;
 
   var $ = function (id) { return document.getElementById(id); };
+  // copiar el comando de instalación
+  var copy = $("cmd-copy");
+  if (copy && navigator.clipboard) copy.onclick = function () {
+    navigator.clipboard.writeText($("cmd-text").textContent).then(function () {
+      copy.textContent = "copiado ✓";
+      setTimeout(function () { copy.textContent = "copiar"; }, 2000);
+    });
+  };
+
   var year = $("year");
   if (year) year.textContent = new Date().getFullYear();
 
