@@ -53,11 +53,15 @@ To publish a version: `.\release.ps1 -Title "…"` builds, zips `dist\` with the
 (`atril-<version>-windows-x64.zip`, with **Instalar Atril.cmd** inside) and creates the GitHub release
 `v<version>`; the site, [its site](https://synsema.github.io/atril/), shows it by itself. `-DryRun` only builds the zip.
 
-**Linux / macOS / a server**:
+**Linux / macOS / a server or VPS**, the newest release, for this user (no root):
 
 ```sh
-./install.sh            # atr + atrild in ~/.local/bin; on Linux a systemd user service + linger
+curl -fsSL https://synsema.github.io/atril/install.sh | sh
 ```
+
+It installs the Synsema engine if missing and builds atr + atrild into `~/.local/bin`; on Linux a
+systemd user service and lingering keep your sessions up after you log out.
+`… | sh -s -- --uninstall` removes it. From this checkout: `./install.sh`.
 
 ## Use
 

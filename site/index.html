@@ -136,18 +136,23 @@ $ █</pre>
   </p>
   <div class="cta" id="bajar">
     <a class="chip dark big" id="dl-windows" href="https://github.com/SYNSEMA/atril/releases/latest">Bajar para Windows</a>
-    <a class="chip big" id="dl-linux" href="https://github.com/SYNSEMA/atril#install">Linux</a>
+    <a class="chip big" id="dl-linux" href="#linux">Linux</a>
     <a class="chip big off" id="dl-macos" aria-disabled="true">macOS · pronto</a>
   </div>
   <p class="count"><span id="dl-count"></span>gratis ▪ Apache-2.0 ▪ sin cuentas</p>
-  <!-- desde la terminal: sin la marca de "bajado de internet", Windows no muestra avisos -->
+  <!-- desde la terminal: más fácil, y en Windows sin la marca de "bajado de internet" no hay avisos -->
   <div class="win cmd">
-    <div class="wt">PowerShell ▪ sin avisos de Windows</div>
-    <div class="wb"><code id="cmd-text">irm https://synsema.github.io/atril/install.ps1 | iex</code><button class="copy" id="cmd-copy" type="button">copiar</button></div>
+    <div class="wt">Windows ▪ PowerShell, sin avisos</div>
+    <div class="wb"><code>irm https://synsema.github.io/atril/install.ps1 | iex</code><button class="copy" type="button">copiar</button></div>
+  </div>
+  <div class="win cmd" id="linux">
+    <div class="wt">Linux y macOS ▪ un servidor, una VPS, tu equipo</div>
+    <div class="wb"><code>curl -fsSL https://synsema.github.io/atril/install.sh | sh</code><button class="copy" type="button">copiar</button></div>
   </div>
   <p class="how">
-    O bajá el .zip, descomprimilo y abrí <b>Instalar Atril</b> (Windows puede preguntar si confiás en el archivo).
-    Windows 10 y 11, queda en el menú Inicio, sin permisos de administrador.
+    Sin permisos de administrador ni root. En Windows también podés bajar el .zip, descomprimirlo y abrir
+    <b>Instalar Atril</b> (Windows puede preguntar si confiás en el archivo). En Linux, un servicio mantiene
+    tus sesiones vivas aunque cierres la conexión SSH.
   </p>
 
   <!-- la app de verdad -->
