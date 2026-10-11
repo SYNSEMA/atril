@@ -96,6 +96,60 @@ task kind_from_title(title)
             give pair[1]
     give nothing
 
+-- the agent a typed command starts: "codex", "npx @openai/codex", "claude --resume" → its kind, or nothing
+task agent_of(command)
+    let words be where(split(trim(text(command)), " "), (w) => w != "")
+    when length(words) == 0
+        give nothing
+    let w be words[0]
+    when lower(w) in ["npx", "bunx", "pnpx", "pnpm", "yarn"] and length(words) > 1
+        set w to regex_replace(words[1], "^@[^/]+/", "")
+    let k be kind_of(w)
+    give when k == "shell" then nothing otherwise k
+
+-- what an agent prints when it starts, for one launched some other way (a script, an alias)
+task agent_in_banner(text_after)
+    each pair in [["OpenAI Codex", "codex"], ["Claude Code", "claude"], ["Gemini CLI", "gemini"], ["opencode", "opencode"], ["Aider v", "aider"]]
+        when contains(text_after, pair[0])
+            give pair[1]
+    give nothing
+
+-- what PowerShell's own screen says (its prompt is "PS C:\folder> "): the folder of the last prompt,
+-- whether the shell sits at that prompt (nothing runs), and what was typed after it. nothing when no
+-- prompt is in view (another shell, or a full-screen program cleared it)
+task read_screen(screen)
+    let prompts be regex_find_all(screen, "PS [A-Za-z]:[^>\r\n]*>[^\r\n]*")
+    when length(prompts) == 0
+        give nothing
+    let last be prompts[length(prompts) - 1]
+    let cap be regex_capture(last, "^PS ([A-Za-z]:[^>\r\n]*)> *(.*)$")
+    when cap == nothing
+        give nothing
+    -- what follows the last time that line appears
+    let pieces be split(screen, last)
+    let after be pieces[length(pieces) - 1]
+    give {"folder": cap[0], "typed": trim(cap[1]), "at_prompt": trim(after) == "", "after": after}
+
+-- the folder as Windows spells it on disk ("desktop" → "Desktop"): tools that key by path, like
+-- Claude Code's trusted folders, then see one folder and not two
+task real_case(path)
+    when platform()["os"] != "windows" or path == nothing
+        give path
+    let parts be where(split(replace(text(path), "/", "\\"), "\\"), (x) => x != "")
+    when length(parts) == 0 or not regex_find_all(parts[0], "^[A-Za-z]:$")
+        give path
+    let cur be upper(parts[0]) + "\\"
+    each part in slice(parts, 1)
+        let name be part
+        try
+            each e in list_dir(cur)
+                when lower(e["name"]) == lower(part)
+                    set name to e["name"]
+        recover err
+            set name to part
+        set cur to cur + name + "\\"
+    give when length(parts) == 1 then cur otherwise slice(cur, 0, length(cur) - 1)
+
 -- the last terminal title in a chunk of output (OSC 0 or 2), or nothing
 task title_in(chunk)
     let found be regex_find_all(chunk, "\u001b\\][02];[^\u0007\u001b]*(\u0007|\u001b\\\\)")
@@ -110,6 +164,20 @@ task title_in(chunk)
 task space_key(path)
     let p be regex_replace(replace(text(path), "\\", "/"), "/+$", "")
     give when platform()["os"] == "windows" then lower(p) otherwise p
+
+-- the folder of the repository that holds dir (looking up its parents), or nothing
+task git_root(dir)
+    let d be regex_replace(replace(text(dir), "\\", "/"), "/+$", "")
+    let depth be 0
+    while depth < 40
+        when file_info(d + "/.git")["exists"]
+            give d
+        let up be regex_replace(d, "/[^/]*$", "")
+        when up == d or up == ""
+            give nothing
+        set d to up
+        set depth to depth + 1
+    give nothing
 
 -- the branch of the repository that holds dir (looking up its parents), or nothing
 task git_branch(dir)
@@ -186,7 +254,7 @@ task add_space(path)
     each sp in all
         when sp["key"] == key
             give key
-    state_set("spaces", all + [{"key": key, "path": path}])
+    state_set("spaces", all + [{"key": key, "path": real_case(path)}])
     bus_publish("spaces", {"changed": key})
     give key
 
@@ -198,6 +266,7 @@ task publish_meta(meta)
 agent Session
     require exec
     require time
+    require file.read
     let p be proc_spawn(cmd, args, {"pty": true, "cols": cols, "rows": rows, "cwd": cwd})
     let inbox be bus_subscribe("in." + sid)
     let meta be {"id": sid, "name": name, "cmd": cmd, "args": args, "cwd": cwd, "space": space_key(cwd), "kind": kind_of(cmd),
@@ -207,6 +276,9 @@ agent Session
     let seq be 0
     let buf be ""
     let last_out be now()
+    let screen be ""            -- the last few thousand characters as a person reads them
+    let screen_kind be nothing  -- the agent the screen shows running, when it shows one
+    let folder be nothing       -- where the shell last said it was
     while true
         let ev be select({"p": p, "in": inbox}, 1)
         when ev == nothing
@@ -236,9 +308,39 @@ agent Session
             let t be title_in(chunk)
             when t != nothing and t != meta["title"]
                 set meta["title"] to t
-                let k be kind_from_title(t)
-                set meta["kind"] to (when k != nothing then k otherwise kind_of(cmd))
                 set changed to true
+            -- what runs now: the title an agent sets, else what was typed at the prompt or what the
+            -- agent printed, else the program the session started with
+            -- reading the screen is a nicety: a mistake in it must never take the terminal down
+            try
+                set screen to slice(screen + strip_ansi(chunk), -6000)
+                let seen be read_screen(screen)
+                when seen != nothing
+                    when seen["at_prompt"]
+                        set screen_kind to nothing
+                    otherwise
+                        let typed be agent_of(seen["typed"])
+                        set screen_kind to (when typed != nothing then typed otherwise agent_in_banner(seen["after"]))
+                    -- the space follows the shell into a repository (or a space you already have)
+                    when seen["folder"] != folder
+                        set folder to seen["folder"]
+                        set meta["here"] to folder
+                        let root be git_root(folder)
+                        let target be root
+                        when target == nothing
+                            each sp in state_get("spaces", [])
+                                when sp["key"] == space_key(folder)
+                                    set target to sp["path"]
+                        when target != nothing and space_key(target) != meta["space"]
+                            set meta["space"] to add_space(target)
+                        set changed to true
+                let tk be kind_from_title(meta["title"])
+                let kind be when tk != nothing then tk otherwise (when screen_kind != nothing then screen_kind otherwise kind_of(cmd))
+                when kind != meta["kind"]
+                    set meta["kind"] to kind
+                    set changed to true
+            recover err
+                set meta["screen_error"] to text(err)
             -- a bell outside a title: the program asks for attention
             when not meta["bell"] and contains(regex_replace(chunk, "\u001b\\][^\u0007]*\u0007", ""), "\u0007")
                 set meta["bell"] to true
@@ -409,6 +511,7 @@ serve on 7171
         let cwd be get(b, "cwd")
         when cwd == nothing or cwd == ""
             set cwd to HOME
+        set cwd to real_case(cwd)
         add_space(cwd)
         let cols be int(get(b, "cols"), fallback = 120)
         let rows be int(get(b, "rows"), fallback = 32)
