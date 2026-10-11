@@ -48,6 +48,9 @@ starts the daemon when you sign in. No admin.
 ## Use
 
 ```sh
+atr claude                     # Claude Code in a new session here, in this terminal (SSH too);
+                               # Ctrl+] lets go of it and it keeps running; the app shows it
+atr attach <session>           # back into it, from any terminal
 atr run --name review claude   # a session running Claude Code
 atr name 2 "migración de la base"   # a title for a session, to remember it and find it
 atr run                        # your shell
@@ -98,9 +101,11 @@ src/window.syn      opens the window; shared by both
 src/ui/             the window
 ```
 
-In the window a **space** is a folder (with its git branch), its **tabs** are the sessions that run
+In the window each **machine** has a tab (this computer, the servers you connected, **+** to
+connect another); a **space** is a folder (with its git branch), its **tabs** are the sessions that run
 there (+ asks for an optional title; double-click a tab to change it), and **agents** lists only
-agents, from every space. **new** opens a picker with your recent repositories and a folder browser.
+agents, from every space of every machine, plus the agents that run **outside Atril** (seen, not
+attachable: start them with `atr claude` to have them). **new** opens a picker with your recent repositories and a folder browser.
 
 ## License
 

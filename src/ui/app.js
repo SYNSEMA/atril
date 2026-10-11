@@ -10,9 +10,11 @@ const LOCAL = "local";
 
 // machines: this one first, then the connected ones. {mid, name, status, error, target}
 let machines = [{ mid: LOCAL, name: "", status: "up" }];
+let myVersion = "";           // this computer's Atril; a machine with another can be updated
 const sessions = new Map();   // "mid/id" -> metadata (with .mid and .key)
 const spacesBy = {};          // mid -> [{key, path, name, branch}]
 const feeds = {};             // mid -> its events socket
+const outsideBy = {};         // mid -> agents running there outside Atril (seen, not attachable)
 const terms = new Map();      // session key -> {term, fit, ws, el, ...}
 let wanted = null;            // `atr open <session>`: the tab to show first
 
@@ -21,6 +23,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 let current = store.get("space2", null);                 // "mid|space key" on screen
+let machineSel = store.get("machine", LOCAL);           // the machine whose spaces the sidebar lists
 const hidden = new Set(store.get("hidden2", []));        // session keys whose tab was closed here
 const lastTab = store.get("lastTab2", {});               // "mid|space" -> the session key it showed last
 
@@ -38,7 +41,9 @@ async function login() {
   if (m) history.replaceState(null, "", location.pathname);
   const r = await fetch("/api/login", { method: "POST", headers, credentials: "same-origin" });
   if (!r.ok) return false;
-  machines[0].name = (await r.json()).machine;
+  const me = await r.json();
+  machines[0].name = me.machine;
+  myVersion = me.version || "";
   return true;
 }
 
@@ -104,6 +109,7 @@ function feed(mid) {
     const m = JSON.parse(e.data);
     if (m.t === "show") { if (mid === LOCAL) show(m.ref); return; }
     if (m.t === "machines") { if (mid === LOCAL) setMachines(m.machines); return; }
+    if (m.t === "outside") { outsideBy[mid] = m.list; renderSide(); return; }
     if (m.t === "spaces") spacesBy[mid] = m.spaces;
     else if (m.t === "all") {
       for (const k of [...sessions.keys()]) if (k.startsWith(mid + "/")) sessions.delete(k);
@@ -125,7 +131,7 @@ function put(mid, s) { sessions.set(skey(mid, s.id), { ...s, mid, key: skey(mid,
 
 // the machines this daemon keeps linked: open a feed for each one that is up
 function setMachines(list) {
-  machines = [machines[0], ...list.map((x) => ({ mid: x.id, name: x.name, status: x.status, error: x.error, target: x.target }))];
+  machines = [machines[0], ...list.map((x) => ({ mid: x.id, name: x.name, status: x.status, error: x.error, target: x.target, version: x.version }))];
   for (const m of machines.slice(1)) {
     if (m.status === "up") feed(m.mid);
     else if (feeds[m.mid]) feeds[m.mid].close();
@@ -146,30 +152,63 @@ setInterval(async () => {
 
 // ---- sidebar
 const STATUS_TEXT = { up: "conectada", connecting: "conectando…", down: "sin conexión, reintentando" };
+const machineName = (mm) => mm.name || (mm.mid === LOCAL ? "esta computadora" : mm.target);
+
+// a machine's tab shows its spaces and the space you used last there (or its first one)
+const lastSpace = store.get("lastSpace", {});   // mid -> space id
+function selectMachine(mid) {
+  machineSel = mid;
+  store.set("machine", mid);
+  const list = spacesBy[mid] || [];
+  const busy = list.find((sp) => tabsOf(spaceId(mid, sp.key)).length);
+  const want = spaceOf(lastSpace[mid]) ? lastSpace[mid] : (busy || list[0]) ? spaceId(mid, (busy || list[0]).key) : null;
+  if (want) selectSpace(want);
+  else { current = null; showOnly(null); renderSide(); }
+}
+
 function renderSide() {
+  if (!machineOf(machineSel)) machineSel = LOCAL;
+  const many = machines.length > 1;
+
+  // one tab per machine; + connects another
+  const tabs = $("#mtabs");
+  tabs.innerHTML = "";
+  for (const mm of machines) {
+    const b = document.createElement("button");
+    b.className = mm.mid === machineSel ? "on" : "";
+    b.innerHTML = `<span class="st ${mm.mid === LOCAL ? "up" : mm.status}"></span><span></span>`;
+    const old = mm.mid !== LOCAL && mm.status === "up" && mm.version !== myVersion;
+    b.lastChild.textContent = machineName(mm) + (old ? " ↑" : "");
+    b.title = mm.mid === LOCAL ? "Esta computadora" : `${mm.target} · ${STATUS_TEXT[mm.status] || mm.status}${mm.error ? "\n" + mm.error : ""}\n${old ? `\nTiene Atril ${mm.version || "viejo"}; acá está ${myVersion}: clic derecho → Actualizar Atril ahí` : ""}\n(clic derecho: reconectar, actualizar, desconectar)`;
+    b.onclick = () => selectMachine(mm.mid);
+    b.oncontextmenu = (e) => { e.preventDefault(); showMachineMenu(mm, e.clientX, e.clientY); };
+    tabs.append(b);
+  }
+  const add = document.createElement("button");
+  add.className = "add";
+  add.textContent = "+";
+  add.title = "Conectar otra máquina (un servidor o una computadora, por SSH)";
+  add.onclick = openConnect;
+  tabs.append(add);
+
+  // the spaces of the machine chosen above
   const ul = $("#spaces");
   ul.innerHTML = "";
-  const many = machines.length > 1;
-  for (const mm of machines) {
-    if (many || mm.mid !== LOCAL) {
-      const h = document.createElement("li");
-      h.className = "mhead " + mm.status;
-      h.innerHTML = `<span class="st ${mm.status}"></span><span></span><span class="mst"></span>`;
-      h.children[1].textContent = mm.name || (mm.mid === LOCAL ? "esta computadora" : mm.target);
-      h.children[2].textContent = mm.mid === LOCAL ? "esta computadora" : STATUS_TEXT[mm.status] || mm.status;
-      h.title = mm.mid === LOCAL ? "Esta computadora" : `${mm.target}\n${STATUS_TEXT[mm.status] || mm.status}${mm.error ? "\n" + mm.error : ""}`;
-      h.oncontextmenu = (e) => { e.preventDefault(); showMachineMenu(mm, e.clientX, e.clientY); };
-      ul.append(h);
-    }
-    const list = spacesBy[mm.mid] || [];
-    if (mm.mid !== LOCAL && mm.status === "up" && !list.length) {
-      const li = document.createElement("li");
-      li.className = "mempty";
-      li.textContent = "sin spaces todavía: clic derecho → Nuevo space";
-      ul.append(li);
-    }
-    for (const sp of list) ul.append(spaceItem(mm, sp));
+  const mm = machineOf(machineSel);
+  const list = spacesBy[mm.mid] || [];
+  if (mm.mid !== LOCAL && mm.status !== "up") {
+    const li = document.createElement("li");
+    li.className = "mempty";
+    li.textContent = mm.status === "connecting" ? "conectando…" : "sin conexión, reintentando…";
+    if (mm.error) li.title = mm.error;
+    ul.append(li);
+  } else if (!list.length) {
+    const li = document.createElement("li");
+    li.className = "mempty";
+    li.textContent = `Sin spaces en ${machineName(mm)}: new para abrir una carpeta.`;
+    ul.append(li);
   }
+  for (const sp of list) ul.append(spaceItem(mm, sp));
 
   const agents = allSessions().filter(isAgent);
   $("#count").textContent = agents.length ? `${agents.filter((s) => s.status === "running").length} vivos` : "";
@@ -181,18 +220,41 @@ function renderSide() {
     li.textContent = "ninguno todavía: corré claude, codex… en una pestaña";
     al.append(li);
   }
-  for (const mm of machines) {
-    for (const sp of spacesBy[mm.mid] || []) {
-      const group = agents.filter((s) => s.mid === mm.mid && s.space === sp.key);
+  for (const m2 of machines) {
+    for (const sp of spacesBy[m2.mid] || []) {
+      const group = agents.filter((s) => s.mid === m2.mid && s.space === sp.key);
       if (!group.length) continue;
       const g = document.createElement("li");
       g.className = "group";
-      g.textContent = (many ? (mm.name || "esta computadora") + " · " : "") + sp.name + (sp.branch ? " · " + sp.branch : "");
+      g.textContent = (many ? machineName(m2) + " · " : "") + sp.name + (sp.branch ? " · " + sp.branch : "");
       al.append(g);
       for (const s of group) al.append(agentItem(s));
     }
   }
+  for (const m2 of machines) {
+    const out = outsideBy[m2.mid] || [];
+    if (!out.length) continue;
+    const g = document.createElement("li");
+    g.className = "group";
+    g.textContent = "fuera de Atril" + (many ? " · " + machineName(m2) : "");
+    g.title = "Agentes que corren en esta máquina pero no dentro de Atril (abiertos desde otra terminal o por SSH)";
+    al.append(g);
+    for (const o of out) al.append(outsideItem(m2, o));
+  }
   renderTabs();
+}
+
+// an agent Atril sees running but does not own: its screen is in another terminal
+function outsideItem(mm, o) {
+  const li = document.createElement("li");
+  li.className = "outside";
+  li.innerHTML = `<span class="st exited"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
+  li.querySelector(".name").textContent = o.kind;
+  li.querySelector(".meta").textContent = o.age != null ? ago(Date.now() / 1000 - o.age) : "";
+  li.querySelector(".sub").textContent = `pid ${o.pid}${o.cwd ? " · " + o.cwd : ""}`;
+  li.title = `${o.kind} corre en ${machineName(mm)} fuera de Atril (pid ${o.pid}).\nSu pantalla está en la terminal donde lo abrieron: Atril no puede mostrarla ni mantenerlo vivo si esa terminal se cierra.\nPara tenerlo acá, abrilo con «atr ${o.kind}» en esa máquina, o desde una pestaña de Atril.`;
+  li.onclick = () => notice(li.title);
+  return li;
 }
 
 function spaceItem(mm, sp) {
@@ -234,6 +296,9 @@ function agentItem(s) {
 // ---- spaces and tabs
 function selectSpace(sid) {
   current = sid;
+  if (sid) { lastSpace[sid.split("|")[0]] = sid; store.set("lastSpace", lastSpace); }
+  const sp = spaceOf(sid);
+  if (sp && sp.mid !== machineSel) { machineSel = sp.mid; store.set("machine", machineSel); }
   store.set("space2", sid);
   const visible = tabsOf(sid);
   const want = visible.find((s) => s.key === lastTab[sid]) || visible[visible.length - 1];
@@ -281,6 +346,8 @@ function reveal(key) {
   store.set("hidden2", [...hidden]);
   current = spaceId(s.mid, s.space);
   store.set("space2", current);
+  machineSel = s.mid;
+  store.set("machine", machineSel);
   focusTab(key);
 }
 
@@ -359,7 +426,7 @@ function askTitle() {
 }
 function endAsk() { $("#newtitle").hidden = true; $("#plus").hidden = false; }
 $("#newtitle").onkeydown = (e) => {
-  if (e.key === "Enter") { const name = e.target.value.trim(); endAsk(); newTab(name ? { name } : {}).catch((err) => alert(err.message)); }
+  if (e.key === "Enter") { const name = e.target.value.trim(); endAsk(); newTab(name ? { name } : {}).catch((err) => notice(err.message)); }
   else if (e.key === "Escape") { endAsk(); const t = terms.get(lastTab[current]); if (t) t.term.focus(); }
 };
 $("#newtitle").onblur = endAsk;
@@ -382,7 +449,7 @@ function renameTab(key) {
     editing = false;
     const name = input.value.trim();
     if (save && name && name !== s.name) {
-      try { await api("POST", `${base(s.mid)}/sessions/${s.id}/rename`, { name }); } catch (err) { alert(err.message); }
+      try { await api("POST", `${base(s.mid)}/sessions/${s.id}/rename`, { name }); } catch (err) { notice(err.message); }
     }
     renderTabs();
     const t = terms.get(key);
@@ -501,7 +568,7 @@ const picker = { mid: LOCAL, mode: "suggest", path: null, parent: null, branch: 
 const pathLike = (v) => /[\\/:]/.test(v);
 
 async function openPicker(mid) {
-  picker.mid = mid || (spaceOf(current) || { mid: LOCAL }).mid;
+  picker.mid = mid || machineSel;
   const mm = machineOf(picker.mid);
   $("#pwhere").textContent = "· una carpeta de " + (picker.mid === LOCAL ? "esta computadora" : (mm ? mm.name : "la máquina"));
   $("#picker").hidden = false;
@@ -706,7 +773,77 @@ $("#cgo").onclick = startConnect;
 $("#ccancel").onclick = closeConnect;
 $("#ctarget").onkeydown = (e) => { if (e.key === "Enter") startConnect(); };
 $("#conn").onclick = (e) => { if (e.target.id === "conn") closeConnect(); };
-$("#connect").onclick = openConnect;
+
+
+// ---- Atril's dialogs: ask() gives the value of the button pressed, or null (Esc, a click outside)
+function ask(text, buttons) {
+  return new Promise((resolve) => {
+    const box = $("#dialog");
+    $("#dtext").textContent = text;
+    const row = $("#dbtns");
+    row.innerHTML = "";
+    const done = (v) => { box.hidden = true; document.removeEventListener("keydown", onKey, true); resolve(v); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(null); } };
+    for (const b of buttons) {
+      const el = document.createElement("button");
+      el.textContent = b.label;
+      if (b.kind) el.className = b.kind;
+      el.onclick = () => done(b.value);
+      row.append(el);
+    }
+    box.onclick = (e) => { if (e.target === box) done(null); };
+    document.addEventListener("keydown", onKey, true);
+    box.hidden = false;
+    (row.querySelector(".primary, .danger") || row.lastChild).focus();
+  });
+}
+const notice = (text) => ask(text, [{ label: "Entendido", value: true, kind: "primary" }]);
+
+async function forgetSpace(sp) {
+  const running = inSpace(sp.sid).filter((s) => s.status === "running");
+  let stop = false;
+  if (running.length) {
+    const names = running.map((s) => `${untitled(s) && isAgent(s) ? s.kind : s.name} (pid ${s.pid})`).join(", ");
+    const v = await ask(`En ${sp.name} todavía corre: ${names}.\n\nSi olvidás el space, eso se termina.`,
+      [{ label: "Cancelar", value: false }, { label: "Terminar y olvidar", value: true, kind: "danger" }]);
+    if (!v) return;
+    stop = true;
+  } else {
+    const v = await ask(`¿Olvidar ${sp.name}?\nSólo deja de aparecer acá: la carpeta no se toca.`,
+      [{ label: "Cancelar", value: false }, { label: "Olvidar", value: true, kind: "primary" }]);
+    if (!v) return;
+  }
+  await api("POST", base(sp.mid) + "/spaces/forget", { key: sp.key, stop });
+  for (const s of inSpace(sp.sid)) { dropTerm(s.key); if (s.status !== "running") sessions.delete(s.key); }
+  if (current === sp.sid) { current = null; store.set("space2", null); }
+  spacesBy[sp.mid] = (spacesBy[sp.mid] || []).filter((x) => x.key !== sp.key);
+  renderSide();
+}
+
+// install this computer's Atril on a connected machine again; the dialog of "connect" shows the steps
+async function updateMachine(mm) {
+  const ok = await ask(`¿Actualizar Atril en ${machineName(mm)} a la versión de esta computadora (${myVersion})?\nLo que corre en Atril allá se cierra; los spaces quedan.`,
+    [{ label: "Cancelar", value: false }, { label: "Actualizar", value: true, kind: "primary" }]);
+  if (!ok) return;
+  openConnect();
+  $("#cgo").hidden = true;
+  working(true);
+  logLine(`Actualizando Atril en ${machineName(mm)}…`);
+  const ws = new WebSocket(WS + `/api/machines/${encodeURIComponent(mm.mid)}/update`);
+  connWs = ws;
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === "step") logLine(m.msg);
+    else if (m.t === "done") {
+      working(false);
+      const r = m.result || {};
+      if (r.ok) { logLine("Listo: actualizado. Reconectando.", "ok"); setTimeout(closeConnect, 1500); }
+      else logLine(r.error || "No se pudo actualizar.", "err");
+      connWs = null;
+    }
+  };
+  ws.onclose = () => { if (connWs === ws) { logLine("Se cortó la conexión con Atril.", "err"); working(false); connWs = null; } };
+}
 
 // ---- context menus
 let ctxKey = null;
@@ -724,6 +861,7 @@ function showCtx(key, x, y) {
   const s = sessions.get(key);
   only("session");
   m.querySelector('[data-a="kill"]').hidden = s.status !== "running";
+  m.querySelector('[data-a="kill"]').textContent = "Terminar proceso";
   m.querySelector('[data-a="remove"]').hidden = s.status === "running";
   m.querySelector('[data-a="restart"]').hidden = s.status === "running";
   place(m, x, y);
@@ -735,6 +873,7 @@ function showMachineMenu(mm, x, y) {
   const m = $("#ctx");
   m.querySelector('[data-a="reconnect"]').hidden = mm.mid === LOCAL;
   m.querySelector('[data-a="unlink"]').hidden = mm.mid === LOCAL;
+  m.querySelector('[data-a="update"]').hidden = mm.mid === LOCAL || mm.status !== "up";
   m.querySelector('[data-a="mnew"]').hidden = mm.status !== "up";
   place(m, x, y);
 }
@@ -744,25 +883,28 @@ $("#ctx").onclick = async (e) => {
   if (!a) return;
   $("#ctx").hidden = true;
   try {
-    if (a === "forget") {
-      await api("POST", base(ctxSpace.mid) + "/spaces/forget", { key: ctxSpace.key });
-      if (current === ctxSpace.sid) current = null;
-      return;
-    }
+    if (a === "forget") return await forgetSpace(ctxSpace);
     if (a === "newtab") { current = ctxSpace.sid; store.set("space2", current); renderSide(); return askTitle(); }
     if (a === "mnew") return openPicker(ctxMachine.mid);
     if (a === "reconnect") return api("POST", `/api/machines/${ctxMachine.mid}/reconnect`);
+    if (a === "update") return updateMachine(ctxMachine);
     if (a === "unlink") {
-      if (!confirm(`¿Desconectar ${ctxMachine.name}? Sus sesiones siguen corriendo allá; deja de verse acá.`)) return;
+      const ok = await ask(`¿Desconectar ${ctxMachine.name}?\nLo que corre allá sigue corriendo; sólo deja de verse acá.`,
+        [{ label: "Cancelar", value: false }, { label: "Desconectar", value: true, kind: "danger" }]);
+      if (!ok) return;
       return api("POST", `/api/machines/${ctxMachine.mid}/forget`);
     }
     const s = sessions.get(ctxKey);
     if (a === "open") reveal(ctxKey);
     if (a === "rename") { reveal(ctxKey); setTimeout(() => renameTab(ctxKey), 50); }
-    if (a === "kill" && confirm(`¿Matar ${s.name} (pid ${s.pid})? El programa se cierra.`)) await api("POST", `${base(s.mid)}/sessions/${s.id}/kill`);
+    if (a === "kill") {
+      const ok = await ask(`¿Terminar ${untitled(s) && isAgent(s) ? s.kind : s.name} (pid ${s.pid})?\nEl programa se cierra.`,
+        [{ label: "Cancelar", value: false }, { label: "Terminar", value: true, kind: "danger" }]);
+      if (ok) await api("POST", `${base(s.mid)}/sessions/${s.id}/kill`);
+    }
     if (a === "restart") await restart(ctxKey);
     if (a === "remove") closeTab(ctxKey);
-  } catch (err) { alert(err.message); }
+  } catch (err) { notice(err.message); }
 };
 
 // ---- keys

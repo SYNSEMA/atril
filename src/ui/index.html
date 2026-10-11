@@ -15,8 +15,8 @@
     <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
 
     <div class="label">spaces</div>
+    <div id="mtabs"></div>
     <ul id="spaces"></ul>
-    <button id="connect" class="link add" title="Ver otra computadora o un servidor acá, por SSH">+ conectar máquina</button>
 
     <div class="row">
       <button id="new" class="link" title="Nuevo space: una carpeta de trabajo">new</button>
@@ -62,6 +62,10 @@
   </div>
 </div>
 
+<div id="dialog" hidden>
+  <div class="box"><p id="dtext"></p><div id="dbtns"></div></div>
+</div>
+
 <div id="ctx" hidden>
   <button data-a="open">Abrir</button>
   <button data-a="rename">Ponerle título…</button>
@@ -72,6 +76,7 @@
   <button data-a="forget" data-for="space">Olvidar este space</button>
   <button data-a="mnew" data-for="machine">Nuevo space en esta máquina</button>
   <button data-a="reconnect" data-for="machine">Reconectar ahora</button>
+  <button data-a="update" data-for="machine">Actualizar Atril ahí</button>
   <button data-a="unlink" data-for="machine" class="danger">Desconectar y olvidar</button>
 </div>
 

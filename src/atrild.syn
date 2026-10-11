@@ -38,6 +38,7 @@ require net("127.0.0.1")     -- this daemon, and the tunnels to the other machin
 use "./window.syn" as window
 
 let PORT be 7171
+let VERSION be "0.2.0"
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
 -- the name of this computer: Windows says it in COMPUTERNAME; on Linux a daemon started over SSH may
@@ -324,6 +325,11 @@ agent Session
                     set meta["activity"] to "idle"
                     publish_meta(meta)
             otherwise when ev["name"] == "p"
+                when ev["type"] == "exit" and meta["space"] not in apply(load_spaces(), (x) => x["key"])
+                    state_delete("sess:" + sid)
+                    bus_publish("sessions", {"id": sid, "status": "removed"})
+                    bus_publish("out." + sid, {"t": "exit", "code": ev["data"]["exit_code"]})
+                    stop
                 when ev["type"] == "exit"
                     set meta["status"] to "exited"
                     set meta["activity"] to "idle"
@@ -516,6 +522,25 @@ task remote_up(m)
     recover e
         give {"ok": false, "error": text(e)}
 
+-- something already listens on that port of this machine (Windows lets two listen on one port, so a
+-- failed bind cannot be trusted to say it)
+task port_taken(port)
+    try
+        let r be http_get("http://127.0.0.1:" + text(port) + "/", {}, nothing, 3)
+        give (status of r) != 0
+    recover e
+        give false
+
+-- a free local port for machine mid, starting at the one it had; remembered when it changes
+task free_port_for(mid, start)
+    let others be apply(where(load_machines(), (x) => x["id"] != mid), (x) => x["local_port"])
+    let p be start
+    while p in others or port_taken(p)
+        set p to p + 1
+    when p != start
+        save_machines(apply(load_machines(), (x) => when x["id"] == mid then {"id": x["id"], "name": x["name"], "target": x["target"], "port": x["port"], "local_port": p} otherwise x))
+    give p
+
 task answers(port, key)
     try
         let r be http_get("http://127.0.0.1:" + text(port) + "/api/info", {"Authorization": "Bearer " + key}, nothing, 5)
@@ -526,7 +551,7 @@ task answers(port, key)
 task set_link(mid, status, err, remote_machine)
     let prev be state_get("link:" + mid, {})
     let rm be when remote_machine != nothing then remote_machine otherwise get(prev, "machine")
-    state_set("link:" + mid, {"status": status, "error": err, "machine": rm, "since": now()})
+    state_set("link:" + mid, {"status": status, "error": err, "machine": rm, "since": now(), "version": get(prev, "version")})
     bus_publish("machines", {"id": mid})
 
 task machines_view()
@@ -534,7 +559,8 @@ task machines_view()
     each m in load_machines()
         let l be state_get("link:" + m["id"], {})
         set out to out + [{"id": m["id"], "name": m["name"], "target": m["target"], "port": m["port"],
-            "status": get(l, "status", "connecting"), "error": get(l, "error"), "machine": get(l, "machine"), "since": get(l, "since")}]
+            "status": get(l, "status", "connecting"), "error": get(l, "error"), "machine": get(l, "machine"), "since": get(l, "since"),
+            "version": get(l, "version")}]
     give out
 
 -- where a remote daemon answers here, and its key; nothing while its link is not up
@@ -567,7 +593,7 @@ agent Link
                 otherwise
                     let key be up["conf"]["token"]
                     state_set("mkey:" + mid, key)
-                    let lp be m["local_port"]
+                    let lp be free_port_for(mid, m["local_port"])
                     let t be proc_spawn(ssh_tool("ssh"), ssh_opts(m) + ["-N", "-o", "ExitOnForwardFailure=yes", "-L", text(lp) + ":127.0.0.1:7171", m["target"]], {"pty": true, "cols": 400, "rows": 20})
                     let ready be false
                     let tries be 0
@@ -582,9 +608,28 @@ agent Link
                             set said to said + ev["data"] + " "
                             set ev to proc_recv(t, 0.2)
                         proc_close(t)
-                        set_link(mid, "down", "the tunnel did not open: " + trim(said), nothing)
+                        set said to trim(strip_ansi(said))
+                        set_link(mid, "down", "no se abrió el túnel: " + said, nothing)
+                        -- the local port is taken (another program, another Atril): the next free one,
+                        -- remembered for this machine
+                        when regex_find_all(said, "(Address already in use|cannot listen|bind)")
+                            let others be apply(where(load_machines(), (x) => x["id"] != mid), (x) => x["local_port"])
+                            let next be lp + 1
+                            while next in others
+                                set next to next + 1
+                            save_machines(apply(load_machines(), (x) => when x["id"] == mid then {"id": x["id"], "name": x["name"], "target": x["target"], "port": x["port"], "local_port": next} otherwise x))
+                            set backoff to 1
                     otherwise
                         set_link(mid, "up", nothing, get(up["conf"], "machine"))
+                        -- which Atril answers there: an older one can be updated from the machine's menu
+                        try
+                            let info be json of http_get("http://127.0.0.1:" + text(lp) + "/api/info", {"Authorization": "Bearer " + key}, nothing, 5)
+                            let l be state_get("link:" + mid, {})
+                            set l["version"] to get(info, "version")
+                            state_set("link:" + mid, l)
+                            bus_publish("machines", {"id": mid})
+                        recover e
+                            set e to e
                         set backoff to 1
                         let fails be 0
                         let holding be true
@@ -826,6 +871,93 @@ task proxy_http(mid, method, rest, q, body)
         set res to http_delete(url, h, 30)
     give respond(body of res, "application/json", status of res)
 
+-- ---- agents running outside Atril
+--
+-- An agent started in another terminal (or over plain SSH) is not Atril's: its screen lives in that
+-- terminal. Atril can still say it exists. Every 20 s the processes of this machine are listed and the
+-- agents among them kept, minus those that run inside an Atril session (any ancestor is a session's
+-- shell) and an agent's own helpers (a parent of the same kind). Read only: nothing is attached.
+--
+--   state outside   [{pid, kind, age, cwd}]      bus outside   the list changed
+
+-- the agent a command line runs, or nothing: its program, or what an interpreter (node, bun…) runs
+task agent_in_cmdline(cmd)
+    let words be where(split(trim(text(cmd)), " "), (w) => w != "")
+    when length(words) == 0
+        give nothing
+    let first be lower(regex_replace(regex_replace(replace(words[0], "\"", ""), "^.*[\\\\/]", ""), "\\.(exe|cmd|bat)$", ""))
+    when first in AGENTS and first != "ollama"
+        give first
+    when first in ["node", "bun", "deno", "python", "python3"] and length(words) > 1
+        let script be lower(regex_replace(regex_replace(replace(words[1], "\"", ""), "^.*[\\\\/]", ""), "\\.(js|mjs|cjs|py)$", ""))
+        when script in AGENTS and script != "ollama"
+            give script
+        -- npm's shims run …/node_modules/@openai/codex/bin/codex.js: the package names it too
+        each k in AGENTS
+            when k != "ollama" and contains(lower(words[1]), "/" + k + "/") or contains(lower(words[1]), "\\" + k + "\\")
+                give k
+    give nothing
+
+-- [{pid, ppid, age, cmd}] of every process here
+task processes()
+    let out be []
+    when platform()["os"] == "windows"
+        let r be run_quiet("powershell", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}|{2}' -f $_.ProcessId, $_.ParentProcessId, $_.CommandLine }"], 30)
+        each line in split(r["out"], "\n")
+            let c be regex_capture(trim(line), "^([0-9]+)\\|([0-9]+)\\|(.*)$")
+            when c != nothing
+                set out to out + [{"pid": int(c[0]), "ppid": int(c[1]), "age": nothing, "cmd": c[2]}]
+    otherwise
+        let r be run_quiet("ps", ["-eo", "pid=,ppid=,etimes=,args="], 20)
+        each line in split(r["out"], "\n")
+            let c be regex_capture(line, "^\\s*([0-9]+)\\s+([0-9]+)\\s+([0-9]+)\\s+(.*)$")
+            when c != nothing
+                set out to out + [{"pid": int(c[0]), "ppid": int(c[1]), "age": int(c[2]), "cmd": trim(c[3])}]
+    give out
+
+task scan_outside()
+    let own be apply(where(sessions(), (x) => x["status"] == "running"), (x) => x["pid"])
+    let procs be processes()
+    let parent be {}
+    let kind be {}
+    each pr in procs
+        set parent[text(pr["pid"])] to pr["ppid"]
+        set kind[text(pr["pid"])] to agent_in_cmdline(pr["cmd"])
+    let found be []
+    each pr in procs
+        let k be kind[text(pr["pid"])]
+        when k != nothing and kind[text(pr["ppid"])] != k
+            -- inside Atril when any ancestor is a session's shell
+            let inside be false
+            let up be pr["ppid"]
+            let depth be 0
+            while up != nothing and up > 1 and depth < 40 and not inside
+                when up in own
+                    set inside to true
+                set up to get(parent, text(up))
+                set depth to depth + 1
+            when not inside and pr["pid"] not in own
+                set found to found + [{"pid": pr["pid"], "kind": k, "age": pr["age"], "cwd": nothing}]
+    -- where each one works (Linux: /proc/<pid>/cwd)
+    when length(found) > 0 and platform()["os"] == "linux"
+        let r be run_quiet("sh", ["-c", "for p in " + join(apply(found, (f) => text(f["pid"])), " ") + "; do echo \"$p $(readlink /proc/$p/cwd)\"; done"], 10)
+        let where_is be {}
+        each line in split(r["out"], "\n")
+            let c be regex_capture(trim(line), "^([0-9]+) (.+)$")
+            when c != nothing
+                set where_is[c[0]] to c[1]
+        set found to apply(found, (f) => {"pid": f["pid"], "kind": f["kind"], "age": f["age"], "cwd": get(where_is, text(f["pid"]))})
+    give found
+
+task refresh_outside()
+    try
+        let list be scan_outside()
+        when json_encode(list) != json_encode(state_get("outside", []))
+            state_set("outside", list)
+            bus_publish("outside", {"n": length(list)})
+    recover e
+        state_set("outside_error", text(e))
+
 -- what a window may send to a session, and nothing else: keys, or a new size
 task clean_input(m)
     when type_of(m) != "map"
@@ -887,7 +1019,7 @@ serve on 7171
         give respond(LOGIN_PAGE, "text/html")
 
     route "POST /api/login" requires auth
-        give set_cookie({"ok": true, "machine": MACHINE}, cookie_name(text(get(request.headers, "host", ""))), TOKEN, {"secure": false, "same_site": "Strict", "http_only": true})
+        give set_cookie({"ok": true, "machine": MACHINE, "version": VERSION}, cookie_name(text(get(request.headers, "host", ""))), TOKEN, {"secure": false, "same_site": "Strict", "http_only": true})
 
     -- `atr down`: every session ends with the daemon
     route "POST /api/shutdown" requires auth
@@ -904,7 +1036,7 @@ serve on 7171
         try
             give list_dirs(get(query, "path", ""))
         recover e
-            give fail(400, "cannot open that folder: " + text(e))
+            give fail(400, "No puedo abrir esa carpeta: " + text(e))
 
     route "GET /api/dirs/suggest" requires auth
         give {"home": HOME, "repos": suggestions()}
@@ -917,13 +1049,17 @@ serve on 7171
         let b be json of request
         let nm be trim(text(when b == nothing then "" otherwise get(b, "name", "")))
         when nm == "" or length(nm) > 80 or regex_find_all(nm, "[\u0000-\u001f]")
-            give fail(400, "a title is 1 to 80 characters, on one line")
+            give fail(400, "El título va de 1 a 80 caracteres, en una línea.")
         when s["status"] == "running"
             bus_publish("in." + s["id"], {"t": "name", "name": nm})
         otherwise
             set s["name"] to nm
             publish_meta(s)
         give {"ok": true, "id": s["id"], "name": nm}
+
+    -- agents running here outside Atril (see scan_outside)
+    route "GET /api/outside" requires auth
+        give state_get("outside", [])
 
     route "GET /api/spaces" requires auth
         give spaces_view()
@@ -933,16 +1069,25 @@ serve on 7171
         let b be json of request
         let path be when b == nothing then "" otherwise text(get(b, "path", ""))
         when path == "" or not file_info(path)["is_dir"]
-            give fail(400, "no such folder: " + path)
+            give fail(400, "No existe la carpeta " + path)
         give {"key": add_space(path)}
 
-    -- forget a space with nothing running in it
+    -- forget a space. What still runs in it ends first when asked ({stop: true}); otherwise that is
+    -- refused, so nothing dies by surprise. Ended sessions of the space go with it
     route "POST /api/spaces/forget" requires auth
         let b be json of request
         let key be when b == nothing then "" otherwise space_key(get(b, "key", ""))
+        let stop_them be b != nothing and get(b, "stop") == true
         each s in sessions()
-            when get(s, "space") == key and s["status"] == "running"
-                give fail(400, "something is still running in that space")
+            when get(s, "space") == key
+                when s["status"] == "running" and not stop_them
+                    give fail(409, "Todavía corre algo en ese space.")
+                when s["status"] == "running"
+                    bus_publish("in." + s["id"], {"t": "kill"})
+                otherwise
+                    state_delete("sess:" + s["id"])
+                    state_delete("tail:" + s["id"])
+                    bus_publish("sessions", {"id": s["id"], "status": "removed"})
         save_spaces(where(load_spaces(), (sp) => sp["key"] != key))
         bus_publish("spaces", {"changed": key})
         give {"ok": true}
@@ -966,6 +1111,16 @@ serve on 7171
         state_delete("mkey:" + params.mid)
         bus_publish("machines", {"id": params.mid})
         give {"ok": true}
+
+    -- install this computer's Atril on that machine again (an update); its sessions end
+    route "GET /api/machines/:mid/update" requires auth
+        timeout none
+        socket
+            let m be machine_by_id(params.mid)
+            let failed be when m == nothing then "no such machine" otherwise install_remote(socket, m)
+            when failed == nothing
+                bus_publish("link." + params.mid, {"t": "kick"})
+            ws_send(socket, json_encode({"t": "done", "result": (when failed == nothing then {"ok": true, "name": m["name"]} otherwise {"error": failed})}))
 
     route "POST /api/machines/:mid/reconnect" requires auth
         bus_publish("link." + params.mid, {"t": "kick"})
@@ -1007,7 +1162,7 @@ serve on 7171
         give respond(read_file(params.path), "text/plain")
 
     route "GET /api/info" requires auth
-        give {"machine": MACHINE, "os": platform()["os"], "version": "0.1.0"}
+        give {"machine": MACHINE, "os": platform()["os"], "version": VERSION}
 
     route "GET /api/sessions" requires auth
         give sessions()
@@ -1056,7 +1211,7 @@ serve on 7171
         when s == nothing
             give not_found("no session " + params.ref)
         when s["status"] == "running"
-            give fail(400, "session " + s["id"] + " is still running: kill it first")
+            give fail(409, "Esa sesión todavía corre: terminala primero.")
         state_delete("sess:" + s["id"])
         state_delete("tail:" + s["id"])
         bus_publish("sessions", {"id": s["id"], "status": "removed"})
@@ -1066,13 +1221,16 @@ serve on 7171
     route "GET /api/events" requires auth
         timeout none
         socket
-            let sub be bus_subscribe(["sessions", "ui", "spaces", "machines"])
+            let sub be bus_subscribe(["sessions", "ui", "spaces", "machines", "outside"])
             ws_send(socket, json_encode({"t": "all", "sessions": sessions(), "spaces": spaces_view(), "machines": machines_view()}))
+            ws_send(socket, json_encode({"t": "outside", "list": state_get("outside", [])}))
             while true
                 let ev be select({"ui": socket, "bus": sub}, 30)
                 when ev != nothing and ev["name"] == "ui"
                     when ev["type"] == "close"
                         stop
+                otherwise when ev != nothing and ev["topic"] == "outside"
+                    ws_send(socket, json_encode({"t": "outside", "list": state_get("outside", [])}))
                 otherwise when ev != nothing and ev["topic"] == "machines"
                     ws_send(socket, json_encode({"t": "machines", "machines": machines_view()}))
                 otherwise when ev != nothing and ev["topic"] == "spaces"
@@ -1122,6 +1280,9 @@ serve on 7171
 
 -- the links to the other machines open again with the daemon
 cron_after(1, start_links)
+-- and the agents that run outside Atril are looked for now and then
+cron_after(3, refresh_outside)
+cron_every(20, refresh_outside)
 
 print("atril: listening on http://127.0.0.1:" + text(PORT) + " — key in ~/.atril/daemon.json")
 when not BACKGROUND

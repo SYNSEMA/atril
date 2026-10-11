@@ -4,8 +4,12 @@
 --
 --   atr open [session] [--new]     the window (starts the daemon if needed); with a session, on that tab.
 --                                  A window already open shows it instead, unless --new
---   atr run [--name N] [--cwd D] [--open] [cmd args…]
---                                  a new session (your shell without cmd); it outlives every window
+--   atr run [--name N] [--cwd D] [--open] [--attach] [cmd args…]
+--                                  a new session (your shell without cmd), in this folder unless --cwd;
+--                                  it outlives every window. --attach shows it in this terminal
+--   atr claude | codex | … [args]  that agent in a new session here, shown in this terminal (over SSH
+--                                  too): Ctrl+] lets go of it and it keeps running; the app sees it
+--   atr attach <session>           a session in this terminal; Ctrl+] lets go of it
 --   atr ls [--json]                the sessions of this machine
 --   atr name <session> <title…>    give a session a title: what you do there, to find it later
 --   atr kill <session>             end the program of a session (id, name or pid)
@@ -27,12 +31,14 @@ require exec("powershell")
 require exec("sh")
 require exec("open")
 require exec("xdg-open")
+require stdin
+require file.read(".")      -- the folder you are in: where `atr run` and `atr claude` start
 
 use "./window.syn" as window
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
-let VERSION be "0.1.0"
+let VERSION be "0.2.0"
 
 task say(t)
     print(t)
@@ -151,8 +157,8 @@ task list(as_json)
         give nothing
     when length(items) == 0
         say("no sessions. `atr run` opens one.")
-        give nothing
-    say(pad("ID", 6) + pad("NAME", 20) + pad("PID", 8) + pad("STATE", 12) + pad("AGE", 6) + "COMMAND")
+    otherwise
+        say(pad("ID", 6) + pad("NAME", 20) + pad("PID", 8) + pad("STATE", 12) + pad("AGE", 6) + "COMMAND")
     each s in items
         let st be s["activity"]
         when s["status"] == "exited"
@@ -160,12 +166,102 @@ task list(as_json)
         otherwise when s["bell"]
             set st to "needs you"
         say(pad(s["id"], 6) + pad(s["name"], 20) + pad(s["pid"], 8) + pad(st, 12) + pad(ago(s["started"]), 6) + s["cmd"] + " " + join(s["args"], " "))
+    -- agents running here outside Atril: seen, not attachable
+    let out be api("GET", "/api/outside", nothing)["items"]
+    when length(out) > 0
+        say("")
+        say("outside Atril (their screen is in another terminal; start them with `atr <agent>` to have them here):")
+        each o in out
+            say("  " + pad(o["kind"], 12) + "pid " + pad(o["pid"], 8) + (when o["cwd"] == nothing then "" otherwise o["cwd"]))
+
+-- ---- a session in this terminal: keys go to it, its screen comes here, Ctrl+] lets go
+
+let ESC be decode(bytes([27]), "utf8")
+let KEYS be {"enter": "\r", "tab": "\t", "backtab": ESC + "[Z", "backspace": decode(bytes([127]), "utf8"),
+    "delete": ESC + "[3~", "insert": ESC + "[2~", "escape": ESC, "up": ESC + "[A", "down": ESC + "[B",
+    "right": ESC + "[C", "left": ESC + "[D", "home": ESC + "[H", "end": ESC + "[F", "pageup": ESC + "[5~",
+    "pagedown": ESC + "[6~", "f1": ESC + "OP", "f2": ESC + "OQ", "f3": ESC + "OR", "f4": ESC + "OS",
+    "f5": ESC + "[15~", "f6": ESC + "[17~", "f7": ESC + "[18~", "f8": ESC + "[19~", "f9": ESC + "[20~",
+    "f10": ESC + "[21~", "f11": ESC + "[23~", "f12": ESC + "[24~"}
+
+-- what a key event types into a terminal
+task typed(ev)
+    when ev["type"] == "paste"
+        give ev["text"]
+    let out be get(KEYS, ev["key"], "")
+    when ev["key"] == "char"
+        set out to ev["text"]
+        when ev["ctrl"] and length(out) == 1
+            let i be index_of("abcdefghijklmnopqrstuvwxyz", lower(out))
+            when i != nothing
+                set out to decode(bytes([i + 1]), "utf8")
+            otherwise when out in ["@", " ", "2"]
+                set out to decode(bytes([0]), "utf8")
+            -- a terminal sends Ctrl+3..7 with the codes of Ctrl+[ \ ] ^ _ (27..31): read back as digits
+            otherwise when out in ["3", "4", "5", "6", "7"]
+                set out to decode(bytes([index_of("34567", out) + 27]), "utf8")
+            otherwise when out in ["[", "\\", "^", "_"]
+                set out to decode(bytes([index_of("[\\]^_", out) + 27]), "utf8")
+    when ev["alt"] and out != ""
+        set out to ESC + out
+    give out
+
+task attach(ref)
+    let c be up()
+    let term be term_open({"ctrl_c": "key"})
+    when term == nothing
+        fail("atr attach needs a terminal; from a script, use the window (atr open " + ref + ")")
+    let ws be ws_connect("ws://127.0.0.1:7171/api/sessions/" + ref + "/attach", headers(c))
+    let size be term_size(term)
+    ws_send(ws, json_encode({"t": "r", "cols": size["cols"], "rows": size["rows"]}))
+    term_write(term, ESC + "[2J" + ESC + "[H")
+    let why be "soltaste"
+    let going be true
+    while going
+        let ev be select({"keys": term, "ws": ws}, 30)
+        when ev != nothing and ev["name"] == "ws"
+            when ev["type"] == "close"
+                set why to "se cortó la conexión con Atril"
+                set going to false
+            otherwise when ev["type"] == "text"
+                let m be json_decode(ev["data"], nothing)
+                when m != nothing and m["t"] == "o"
+                    term_write(term, m["d"])
+                otherwise when m != nothing and m["t"] == "exit"
+                    set why to "terminó (código " + text(m["code"]) + ")"
+                    set going to false
+                otherwise when m != nothing and m["t"] == "error"
+                    set why to m["error"]
+                    set going to false
+        otherwise when ev != nothing and ev["name"] == "keys"
+            when ev["type"] == "eof"
+                set going to false
+            otherwise when ev["type"] == "resize"
+                ws_send(ws, json_encode({"t": "r", "cols": ev["cols"], "rows": ev["rows"]}))
+            -- Ctrl+] lets go; terminals send it as the code of Ctrl+5, and it may come back as either
+            otherwise when ev["type"] == "key" and ev["key"] == "char" and ev["ctrl"] and ev["text"] in ["]", "5"]
+                set going to false
+            otherwise
+                let k be typed(ev)
+                when k != ""
+                    ws_send(ws, json_encode({"t": "i", "d": k}))
+    ws_close(ws)
+    term_write(term, ESC + "[0m\r\n")
+    term_close(term)
+    when why == "soltaste"
+        say("atril: soltaste " + ref + " y sigue corriendo. Volvé con: atr attach " + ref + "  (o en la app)")
+    otherwise
+        say("atril: " + ref + " " + why)
+
+-- the agents `atr <name>` starts here and shows in this terminal
+let AGENT_CMDS be ["claude", "codex", "opencode", "gemini", "lampson", "aider", "goose", "qwen", "crush", "droid", "copilot"]
 
 -- `atr run`: flags first, then the command and its arguments untouched
 task new_session(rest)
-    let body be {}
+    let body be {"cwd": cwd()}
     let i be 0
     let open be false
+    let here be false
     while i < length(rest) and starts_with(rest[i], "--")
         let f be rest[i]
         when f == "--"
@@ -173,6 +269,9 @@ task new_session(rest)
             stop
         when f == "--open"
             set open to true
+            set i to i + 1
+        otherwise when f == "--attach" or f == "-a"
+            set here to true
             set i to i + 1
         otherwise when (f == "--name" or f == "--cwd") and i + 1 < length(rest)
             set body[slice(f, 2)] to rest[i + 1]
@@ -183,6 +282,9 @@ task new_session(rest)
         set body["cmd"] to rest[i]
         set body["args"] to slice(rest, i + 1)
     let s be api("POST", "/api/sessions", body)
+    when here
+        attach(s["id"])
+        give nothing
     say(s["id"] + "  " + s["name"] + "  pid " + text(s["pid"]))
     when open
         open_window(s["id"], false)
@@ -213,6 +315,12 @@ otherwise when cmd == "rm"
         fail("atr rm <session>")
     api("DELETE", "/api/sessions/" + rest[0], nothing)
     say("removed " + rest[0])
+otherwise when cmd == "attach" or cmd == "a"
+    when length(rest) == 0
+        fail("atr attach <session>   (atr ls lists them)")
+    attach(rest[0])
+otherwise when cmd in AGENT_CMDS
+    new_session(["--attach", cmd] + rest)
 otherwise when cmd == "url"
     say(url_of(when length(rest) > 0 then rest[0] otherwise nothing))
 otherwise when cmd == "version" or cmd == "--version"
@@ -228,4 +336,4 @@ otherwise when cmd == "down"
             set e to e
     say("atril stopped")
 otherwise
-    say("atr open [session] | url [session] | name <s> <title> | run [--name N] [--cwd D] [--open] [cmd args…] | ls [--json] | kill <s> | rm <s> | up | down")
+    say("atr open [session] | claude|codex|… [args] | attach <s> | run [--name N] [--cwd D] [--open] [--attach] [cmd args…] | ls [--json] | name <s> <title> | kill <s> | rm <s> | url [session] | up | down")
