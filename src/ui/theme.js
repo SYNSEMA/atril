@@ -84,21 +84,23 @@ function paintThemeMenu() {
   m.innerHTML = "";
   const h = document.createElement("div"); h.className = "th"; h.textContent = "Cambiar solo"; m.append(h);
   row("Como el sistema", `${THEMES[themePick.light]?.name || themePick.light} de día · ${THEMES[themePick.dark]?.name || themePick.dark} de noche`, themePick.mode === "system", () => setPick({ mode: "system" }));
-  row("Según la hora", "claro de 7 a 19 h", themePick.mode === "time", () => setPick({ mode: "time" }));
+  row("Según la hora", `${THEMES[themePick.light]?.name || themePick.light} de 7 a 19 h · ${THEMES[themePick.dark]?.name || themePick.dark} el resto`, themePick.mode === "time", () => setPick({ mode: "time" }));
   const h2 = document.createElement("div"); h2.className = "th"; h2.textContent = "Temas"; m.append(h2);
   const ids = Object.keys(THEMES).sort((a, b) => (BUILTIN.indexOf(a) + 1 || 99) - (BUILTIN.indexOf(b) + 1 || 99) || a.localeCompare(b));
+  // a click always shows that theme (and leaves the automatic modes); it also becomes the theme of
+  // its half, the one "Como el sistema" and "Según la hora" use for the day or for the night
   for (const id of ids) {
     const t = THEMES[id];
-    const role = themePick.mode !== "fixed" ? (id === themePick.light && t.kind === "light" ? "de día" : id === themePick.dark && t.kind !== "light" ? "de noche" : "") : "";
-    row(t.name || id, (t.kind === "light" ? "claro" : "oscuro") + (id.startsWith("user:") ? " · tuyo" : "") + (role ? " · " + role : ""), id === cur && (themePick.mode === "fixed" || !!role),
-      () => setPick(themePick.mode === "fixed" ? { id } : t.kind === "light" ? { light: id } : { dark: id }), "theme");
+    const role = id === themePick.light && t.kind === "light" ? "de día" : id === themePick.dark && t.kind !== "light" ? "de noche" : "";
+    row(t.name || id, (t.kind === "light" ? "claro" : "oscuro") + (id.startsWith("user:") ? " · tuyo" : "") + (role ? " · " + role : ""),
+      themePick.mode === "fixed" && id === cur, () => setPick({ id }), "theme");
   }
   const f = document.createElement("div");
   f.className = "tf";
   f.textContent = "Los tuyos: un .json en ~/.atril/themes (ver ui/themes/README.md).";
   m.append(f);
 }
-// choosing a theme in "always" mode also makes it the theme of its half for later
+// choosing a theme shows it always, and makes it the theme of its half for the automatic modes
 function setPick(p) {
   if (p.id) { const t = THEMES[p.id]; p = { ...p, mode: "fixed" }; if (t) p[t.kind === "light" ? "light" : "dark"] = p.id; }
   themePick = Object.assign({}, themePick, p);

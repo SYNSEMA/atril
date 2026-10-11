@@ -38,7 +38,7 @@ require net("127.0.0.1")     -- this daemon, and the tunnels to the other machin
 use "./window.syn" as window
 
 let PORT be 7171
-let VERSION be "0.3.2"
+let VERSION be "0.3.3"
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
 -- the name of this computer: Windows says it in COMPUTERNAME; on Linux a daemon started over SSH may
