@@ -1,0 +1,19 @@
+{
+  "name": "Oscuro",
+  "kind": "dark",
+  "ui": {
+    "bg": "#0c0c0d", "panel": "#111113", "line": "#222227", "hover": "#18181c", "sel": "#1c1d2b",
+    "text": "#e6e6ea", "soft": "#c9c9d0", "muted": "#7d7d86", "dim": "#55555d",
+    "accent": "#8fb4ff", "on-accent": "#0b0b10", "branch": "#c3a6ff",
+    "ok": "#57d38c", "busy": "#f2c14e", "warn": "#ff8a5c", "off": "#55555d",
+    "selection": "#2f4a8a", "selection-text": "#ffffff",
+    "plus-bg": "rgba(87, 211, 140, .13)", "plus-text": "#b8f0cf",
+    "minus-bg": "rgba(255, 138, 92, .13)", "minus-text": "#ffc3ab",
+    "hunk-bg": "rgba(143, 180, 255, .07)", "shade": "rgba(0, 0, 0, .5)"
+  },
+  "terminal": {
+    "background": "#0c0c0d", "foreground": "#e6e6ea", "cursor": "#e6e6ea", "cursorAccent": "#0c0c0d",
+    "selectionBackground": "#2f4a8a", "selectionForeground": "#ffffff", "selectionInactiveBackground": "#252b3d"
+  },
+  "contrast": 1
+}

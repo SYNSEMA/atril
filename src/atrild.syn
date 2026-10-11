@@ -38,7 +38,7 @@ require net("127.0.0.1")     -- this daemon, and the tunnels to the other machin
 use "./window.syn" as window
 
 let PORT be 7171
-let VERSION be "0.2.0"
+let VERSION be "0.3.0"
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
 -- the name of this computer: Windows says it in COMPUTERNAME; on Linux a daemon started over SSH may
@@ -292,6 +292,174 @@ task add_space(path)
     save_spaces(all + [{"key": key, "path": real_case(path)}])
     bus_publish("spaces", {"changed": key})
     give key
+
+-- ---- the files of a space: the panel on the right (a tree, what git says changed, a file, its diff)
+--
+-- Read only. A path is always relative to a space you have and never has "..": the panel does not
+-- wander off. git runs in a pseudo-terminal (a console-less daemon would otherwise flash a console
+-- window on Windows) but what it says goes to a file under ~/.atril/tmp: ConPTY redraws what a program
+-- prints (a run of spaces may become a cursor move) and a diff needs every space as it is.
+
+let LIST_MAX be 1000       -- entries of one folder
+let FILE_MAX be 200000     -- characters of a file the viewer shows
+let GIT_TMP be replace(HOME, "\\", "/") + "/.atril/tmp"
+
+-- the folder of a space you have, by its key, or nothing
+task space_root(key)
+    let k be space_key(text(key))
+    each sp in load_spaces()
+        when sp["key"] == k
+            give regex_replace(replace(sp["path"], "\\", "/"), "/+$", "")
+    give nothing
+
+-- a path inside a space: / separators, "." for the space itself; nothing when it would leave it
+task clean_rel(p)
+    let r be regex_replace(regex_replace(replace(text(p), "\\", "/"), "^(\\./|/)+", ""), "/+$", "")
+    when r == "" or r == "."
+        give "."
+    when contains(r, ":") or ".." in split(r, "/")
+        give nothing
+    give r
+
+task abs_in(root, rel)
+    let r be when regex_find_all(root, "^[A-Za-z]:$") then root + "/" otherwise root
+    give when rel == "." then r otherwise regex_replace(r, "/$", "") + "/" + rel
+
+-- a program run to its end in dir, without a window (see run_quiet); gives its exit code
+task run_in(dir, cmd, args, timeout)
+    let p be proc_spawn(cmd, args, {"pty": true, "cols": 400, "rows": 20, "cwd": dir})
+    let code be nothing
+    let deadline be now() + timeout
+    while code == nothing and now() < deadline
+        let ev be proc_recv(p, 1)
+        when ev != nothing and ev["type"] == "exit"
+            set code to ev["data"]["exit_code"]
+    proc_close(p)
+    give when code == nothing then -1 otherwise code
+
+-- what a file under ~/.atril/tmp says, and the file gone; nothing when it cannot be read
+task take_tmp(name)
+    let out be nothing
+    try
+        set out to read_file("~/.atril/tmp/" + name)
+    recover e
+        set out to nothing
+    try
+        delete_file("~/.atril/tmp/" + name)
+    recover e
+        set out to out
+    give out
+
+-- git status of the space: {repo, branch, changes: {path in the space: M | A | D | R | ??}}. The command
+-- line has only fixed words (the folder is the cwd, the output file is under your home): nothing in it
+-- comes from a file name
+task files_status(root)
+    let name be "st-" + token(16) + ".txt"
+    write_file("~/.atril/tmp/" + name, "")
+    let gargs be ["-c", "core.quotepath=off", "--no-optional-locks", "status", "--porcelain=v1", "-z", "-b", "--untracked-files=all", "--", "."]
+    let code be 0
+    when platform()["os"] == "windows"
+        set code to run_in(root, "cmd", ["/c", "git"] + gargs + [">", GIT_TMP + "/" + name, "2>nul"], 20)
+    otherwise
+        set code to run_in(root, "sh", ["-c", "out=$1; shift; git \"$@\" > \"$out\" 2>/dev/null", "sh", GIT_TMP + "/" + name] + gargs, 20)
+    let out be take_tmp(name)
+    when code != 0 or out == nothing
+        give {"repo": false, "branch": nothing, "changes": {}}
+    -- porcelain paths start at the repository's root; the space may be a folder inside it
+    let groot be git_root(root)
+    let prefix be ""
+    when groot != nothing and length(root) > length(groot)
+        set prefix to slice(root, length(groot) + 1) + "/"
+    let branch be nothing
+    let changes be {}
+    let n be 0
+    let skip be false
+    each item in split(out, "\u0000")
+        when skip
+            set skip to false
+        otherwise when starts_with(item, "## ")
+            set branch to split(split(slice(item, 3), "...")[0], " ")[0]
+        otherwise when length(item) > 3 and n < 5000
+            let xy be slice(item, 0, 2)
+            let path be slice(item, 3)
+            -- a rename or a copy: the next item is where it came from
+            set skip to starts_with(xy, "R") or starts_with(xy, "C")
+            let code2 be when xy == "??" then "??" otherwise (when contains(xy, "D") then "D" otherwise (when contains(xy, "A") then "A" otherwise (when contains(xy, "R") then "R" otherwise "M")))
+            when prefix == "" or starts_with(lower(path), lower(prefix))
+                set changes[slice(path, length(prefix))] to code2
+                set n to n + 1
+    give {"repo": true, "branch": branch, "changes": changes}
+
+-- one folder of a space: folders first, then files, by name
+task list_entries(root, rel)
+    let out be []
+    each e in list_dir(abs_in(root, rel))
+        when e["name"] != ".git" and length(out) < LIST_MAX
+            set out to out + [{"name": e["name"], "dir": e["is_dir"], "size": get(e, "size")}]
+    give sort_by(where(out, (x) => x["dir"]), (x) => lower(x["name"])) + sort_by(where(out, (x) => not x["dir"]), (x) => lower(x["name"]))
+
+-- a file for the viewer: its text (cut at FILE_MAX), or binary when it is not text
+task file_read(root, rel)
+    let real be abs_in(root, rel)
+    let info be file_info(real)
+    when not info["exists"]
+        give {"path": rel, "gone": true}
+    when info["is_dir"]
+        give {"path": rel, "error": "es una carpeta"}
+    try
+        let content be read_file(real)
+        when contains(slice(content, 0, 8000), "\u0000")
+            give {"path": rel, "binary": true, "size": info["size"]}
+        give {"path": rel, "content": slice(content, 0, FILE_MAX), "truncated": length(content) > FILE_MAX, "size": info["size"], "modified": info["modified"]}
+    recover e
+        -- read_file only reads UTF-8: an image, a database, an executable
+        give {"path": rel, "binary": true, "size": info["size"]}
+
+-- what changed in a file since the last commit (staged or not), as git diff says it; "" when nothing
+-- did or git has nothing to compare it with (a new file, a repository without commits)
+task file_diff(root, rel)
+    let name be "diff-" + token(16) + ".txt"
+    write_file("~/.atril/tmp/" + name, "")
+    -- no shell here: the file's name reaches git as one argument, and only as a literal path
+    let code be run_in(root, "git", ["--literal-pathspecs", "-c", "core.quotepath=off", "--no-pager", "diff", "--no-color", "--no-ext-diff", "HEAD", "--output=" + GIT_TMP + "/" + name, "--", rel], 20)
+    let out be take_tmp(name)
+    give when code != 0 or out == nothing then "" otherwise slice(out, 0, FILE_MAX * 2)
+
+-- ---- your own themes: every ~/.atril/themes/<name>.json that reads as a map (ui/themes/README.md
+-- says the format). The window lists them next to the ones that come with Atril, no rebuild needed
+task user_themes()
+    let out be []
+    try
+        each e in list_dir("~/.atril/themes")
+            when not e["is_dir"] and ends_with(lower(e["name"]), ".json") and length(out) < 50
+                try
+                    let t be json_decode(read_file("~/.atril/themes/" + e["name"]))
+                    when type_of(t) == "map"
+                        set t["id"] to regex_replace(e["name"], "\\.[Jj][Ss][Oo][Nn]$", "")
+                        set out to out + [t]
+                recover err
+                    set out to out
+    recover e
+        give []
+    give out
+
+-- the folder exists from the start, with a note, so there is somewhere to put one
+when not file_info("~/.atril/themes/README.txt")["exists"]
+    write_file("~/.atril/themes/README.txt", "Your Atril themes: one .json file per theme, here. Copy one of Atril's (src/ui/themes/ in its\nrepository) and change what you want; a theme only needs what it changes. Its README.md explains\nevery color. Atril lists them in the 'tema' menu, at the bottom of the sidebar (reload the window).\n")
+
+-- ---- a star for Atril on GitHub, from the window (ui/star.js asks once in a while). With the GitHub
+-- CLI signed in on this machine one click stars the repository; without it the window opens the
+-- repository's page and the star is given there. Only this repository, only these two calls
+let REPO be "SYNSEMA/atril"
+let REPO_URL be "https://github.com/" + REPO
+
+-- gh's exit code, or nothing when gh is not installed: 0 is yes (204), anything else is no
+task gh_code(args)
+    try
+        let code be run_in(HOME, "gh", args, 15)
+        give when code == -1 then nothing otherwise code
+    recover e
+        give nothing
 
 task publish_meta(meta)
     state_set("sess:" + meta["id"], meta)
@@ -732,8 +900,9 @@ task password_once(sock, m, pub)
 -- here, and its curl fetches each file with a key made for this one install. The engine comes from
 -- its official installer when the machine has none. Then the machine runs install.sh, as a person would.
 
-let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/app.css", "ui/icon.svg",
-    "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js"]
+let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/files.js", "ui/star.js", "ui/theme.js", "ui/app.css",
+    "ui/themes/oscuro.json", "ui/themes/claro.json", "ui/themes/papel.json", "ui/themes/contraste.json", "ui/icon.svg",
+    "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js", "ui/vendor/highlight.min.js"]
 
 task install_script(port, key)
     let fetch_each be "for f in " + join(SOURCES, " ") + "; do curl -fsS -H 'Authorization: Bearer " + key + "' \"http://127.0.0.1:" + text(port) + "/api/source/$f\" -o \"$D/$f\"; done; "
@@ -741,7 +910,7 @@ task install_script(port, key)
         "set -e; export PATH=\"$HOME/.local/bin:$PATH\"; ",
         "command -v curl >/dev/null 2>&1 || { echo 'ATRIL-FAIL esa máquina no tiene curl: instalalo y volvé a conectar'; exit 3; }; ",
         "if ! command -v synsema >/dev/null 2>&1; then echo 'ATRIL-STEP Instalando el motor de Synsema'; curl -fsSL https://synsema.com/install.sh | sh; fi; ",
-        "D=\"$HOME/.atril/src\"; rm -rf \"$D\"; mkdir -p \"$D/ui/vendor\"; ",
+        "D=\"$HOME/.atril/src\"; rm -rf \"$D\"; mkdir -p \"$D/ui/vendor\" \"$D/ui/themes\"; ",
         "echo 'ATRIL-STEP Copiando Atril desde esta computadora'; " + fetch_each,
         "echo 'ATRIL-STEP Compilando e instalando Atril (uno o dos minutos)'; cd \"$D\" && sh install.sh; echo ATRIL-INSTALL-OK"], "")
 
@@ -1099,6 +1268,45 @@ serve on 7171
         bus_publish("spaces", {"changed": key})
         give {"ok": true}
 
+    -- ---- the files of a space (the panel on the right), read only
+    -- the folders open in the panel, what git says changed, and how the file on screen is now (so the
+    -- panel knows when to read it again): one trip each few seconds
+    route "POST /api/files/tree" requires auth
+        let b be json of request
+        let root be space_root(when b == nothing then "" otherwise get(b, "space", ""))
+        when root == nothing
+            give not_found("Ese space no está en esta máquina.")
+        let asked be get(b, "dirs", ["."])
+        let dirs be {}
+        each d in slice(when type_of(asked) == "list" then asked otherwise ["."], 0, 200)
+            let rel be clean_rel(d)
+            when rel != nothing
+                try
+                    set dirs[rel] to list_entries(root, rel)
+                recover e
+                    set dirs[rel] to nothing
+        let st be files_status(root)
+        let watch be nothing
+        let w be clean_rel(get(b, "watch", ""))
+        when w != nothing and w != "."
+            let info be file_info(abs_in(root, w))
+            set watch to {"path": w, "exists": info["exists"], "modified": get(info, "modified"), "size": get(info, "size")}
+        give {"root": root, "repo": st["repo"], "branch": st["branch"], "changes": st["changes"], "dirs": dirs, "watch": watch}
+
+    route "GET /api/files/read" requires auth
+        let root be space_root(get(query, "space", ""))
+        let rel be clean_rel(get(query, "path", ""))
+        when root == nothing or rel == nothing or rel == "."
+            give not_found("No hay tal archivo en ese space.")
+        give file_read(root, rel)
+
+    route "GET /api/files/diff" requires auth
+        let root be space_root(get(query, "space", ""))
+        let rel be clean_rel(get(query, "path", ""))
+        when root == nothing or rel == nothing or rel == "."
+            give not_found("No hay tal archivo en ese space.")
+        give {"path": rel, "diff": file_diff(root, rel)}
+
     -- ---- other machines
     route "GET /api/machines" requires auth
         give machines_view()
@@ -1167,6 +1375,18 @@ serve on 7171
         when params.path not in SOURCES
             give not_found("no such file")
         give respond(read_file(params.path), "text/plain")
+
+    -- starred: true / false, or nothing when gh cannot tell (not installed or not signed in)
+    route "GET /api/star" requires auth
+        let code be gh_code(["api", "user/starred/" + REPO, "--silent"])
+        give {"starred": when code == nothing then nothing otherwise code == 0, "url": REPO_URL}
+
+    route "POST /api/star" requires auth
+        let code be gh_code(["api", "-X", "PUT", "user/starred/" + REPO, "--silent"])
+        give {"starred": code == 0, "url": REPO_URL}
+
+    route "GET /api/themes" requires auth
+        give {"themes": user_themes()}   -- in a map: a bare list would come back paged
 
     route "GET /api/info" requires auth
         give {"machine": MACHINE, "os": platform()["os"], "version": VERSION}

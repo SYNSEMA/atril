@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="app.css">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<script src="theme.js"></script>
 </head>
 <body>
 <div id="app">
@@ -26,17 +27,23 @@
     <div class="label">agents <span id="count" class="muted"></span></div>
     <ul id="agents"></ul>
 
+    <button id="themebtn" class="link" title="Tema: colores de día, de noche, o los tuyos">◐ tema</button>
+    <div id="themes" hidden></div>
     <button id="collapse" class="link small" title="Ocultar panel (Ctrl+Shift+B)">«</button>
   </aside>
 
   <main id="main">
-    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span> terminal</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span> terminal</button><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
         <p id="empty-title">Este space no tiene terminales.</p>
         <button id="open-term" class="bigbtn">▸ Abrir una terminal</button>
         <p class="muted small-hint">o Enter · Ctrl+Shift+T</p>
         <p class="muted">Cerrar una pestaña no termina el programa: sigue corriendo<br>y lo encontrás en <b>agents</b> o con la búsqueda.</p>
+      </div>
+      <div id="viewer" hidden>
+        <div class="vh"><span id="vpath"></span><span id="vmeta" class="muted"></span><span class="sp"></span><span id="vmode" hidden><button data-m="file">archivo</button><button data-m="diff">diff</button></span><button id="vclose" title="Volver a la terminal (Esc)">× cerrar</button></div>
+        <div id="vbody"></div>
       </div>
     </section>
     <div id="keys" class="only-touch">
@@ -45,6 +52,13 @@
       <button data-k="ctrlc">^C</button>
     </div>
   </main>
+
+  <aside id="files" hidden>
+    <div id="fgrip" title="Arrastrá para cambiar el ancho"></div>
+    <div class="fh"><span id="fgit"></span><span class="sp"></span><button id="fpin"></button><button id="freload" title="Leer de nuevo (se actualiza solo cada pocos segundos)">↻</button><button id="fclose" title="Cerrar el panel (Ctrl+Shift+E)">×</button></div>
+    <div id="fchanges"></div>
+    <div id="ftree"></div>
+  </aside>
 </div>
 
 <div id="palette" hidden>
@@ -99,6 +113,9 @@
 
 <script src="vendor/xterm.min.js"></script>
 <script src="vendor/addon-fit.min.js"></script>
+<script src="vendor/highlight.min.js"></script>
 <script src="app.js"></script>
+<script src="files.js"></script>
+<script src="star.js"></script>
 </body>
 </html>

@@ -1,0 +1,19 @@
+{
+  "name": "Alto contraste",
+  "kind": "dark",
+  "ui": {
+    "bg": "#000000", "panel": "#0a0a0a", "line": "#4a4a4a", "hover": "#1a1a1a", "sel": "#1d2a47",
+    "text": "#ffffff", "soft": "#ececec", "muted": "#c4c4c4", "dim": "#959595",
+    "accent": "#74bcff", "on-accent": "#000000", "branch": "#e3adff",
+    "ok": "#52e38d", "busy": "#ffd640", "warn": "#ff8052", "off": "#7a7a7a",
+    "selection": "#0a54d0", "selection-text": "#ffffff",
+    "plus-bg": "rgba(82, 227, 141, .22)", "plus-text": "#d2ffe2",
+    "minus-bg": "rgba(255, 128, 82, .24)", "minus-text": "#ffd7c7",
+    "hunk-bg": "rgba(116, 188, 255, .14)", "shade": "rgba(0, 0, 0, .65)"
+  },
+  "terminal": {
+    "background": "#000000", "foreground": "#ffffff", "cursor": "#ffffff", "cursorAccent": "#000000",
+    "selectionBackground": "#0a54d0", "selectionForeground": "#ffffff", "selectionInactiveBackground": "#28324a"
+  },
+  "contrast": 3
+}

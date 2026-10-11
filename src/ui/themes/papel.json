@@ -1,0 +1,23 @@
+{
+  "name": "Papel",
+  "kind": "light",
+  "ui": {
+    "bg": "#f6f1e7", "panel": "#ede5d5", "line": "#d6cbb5", "hover": "#e7dec9", "sel": "#e0d6c0",
+    "text": "#2b2620", "soft": "#3b342a", "muted": "#675e50", "dim": "#958a78",
+    "accent": "#1d5ca3", "on-accent": "#fffaf0", "branch": "#87398c",
+    "ok": "#2a7535", "busy": "#935f00", "warn": "#b0401a", "off": "#a89d8a",
+    "selection": "#bcd2ee", "selection-text": "#1a160f",
+    "plus-bg": "#d8e9cf", "plus-text": "#1c4b22",
+    "minus-bg": "#f3d8c9", "minus-text": "#7a290c",
+    "hunk-bg": "#e1e5ea", "shade": "rgba(40, 30, 10, .3)"
+  },
+  "terminal": {
+    "background": "#f6f1e7", "foreground": "#2b2620", "cursor": "#2b2620", "cursorAccent": "#f6f1e7",
+    "selectionBackground": "#bcd2ee", "selectionForeground": "#1a160f", "selectionInactiveBackground": "#d3dce6",
+    "black": "#2b2620", "red": "#b3261a", "green": "#2a6e33", "yellow": "#7f5a00", "blue": "#1d5ca3",
+    "magenta": "#87398c", "cyan": "#11707a", "white": "#6e6556",
+    "brightBlack": "#675e50", "brightRed": "#c83a2b", "brightGreen": "#33803d", "brightYellow": "#936a00",
+    "brightBlue": "#2a6db8", "brightMagenta": "#9a4aa0", "brightCyan": "#16818c", "brightWhite": "#958a78"
+  },
+  "contrast": 4.5
+}

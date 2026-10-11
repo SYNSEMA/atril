@@ -341,6 +341,7 @@ function renderTabs() {
   $("#empty-title").textContent = sp ? `${sp.name} no tiene terminales abiertas.` : "Creá un space con new.";
   const mm = sp && machineOf(sp.mid);
   document.title = "Atril · " + (sp ? sp.name + (sp.mid !== LOCAL && mm ? " · " + mm.name : "") : machines[0].name);
+  if (typeof filesSync === "function") filesSync();   // the panel of files follows the space on screen
 }
 
 // show a session wherever it is: its machine, its space, its tab
@@ -362,6 +363,7 @@ function focusTab(key) {
   lastTab[spaceId(s.mid, s.space)] = key;
   store.set("lastTab2", lastTab);
   const t = terms.get(key) || makeTerm(s);
+  if (typeof VIEW !== "undefined" && VIEW) closeViewer();   // a tab chosen: back to the terminal
   showOnly(key);
   requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); });
   renderSide();
@@ -475,7 +477,7 @@ function makeTerm(s) {
   const term = new Terminal({
     fontFamily: getComputedStyle(document.body).getPropertyValue("--mono"),
     fontSize: 14, cursorBlink: true, allowProposedApi: true, scrollback: 10000,
-    theme: { background: "#0c0c0d", foreground: "#e6e6ea", cursor: "#e6e6ea", selectionBackground: "#2a2d45" },
+    theme: termTheme(), minimumContrastRatio: termContrast(),   // theme.js
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -950,6 +952,7 @@ function shortcuts(e) {
   if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { askTitle(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (lastTab[current]) closeTab(lastTab[current]); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyE") { setFiles(!FILES.open); return false; }
   if (e.ctrlKey && e.code === "Tab") {
     const keys = tabsOf(current).map((s) => s.key);
     if (keys.length) focusTab(keys[(keys.indexOf(lastTab[current]) + (e.shiftKey ? -1 : 1) + keys.length) % keys.length]);
@@ -986,7 +989,7 @@ document.addEventListener("keydown", (e) => {
   if ($("#empty").hidden || e.ctrlKey || e.altKey || e.metaKey) return;
   // a key typed into a field (a title, a search) is that field's
   if (/INPUT|TEXTAREA/.test(e.target.tagName) || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) return;
-  if (!$("#palette").hidden || !$("#picker").hidden || !$("#conn").hidden || !$("#dialog").hidden) return;
+  if (!$("#palette").hidden || !$("#picker").hidden || !$("#conn").hidden || !$("#dialog").hidden || !$("#viewer").hidden) return;
   if (e.key === "Enter" || e.key === "+") { e.preventDefault(); newTab().catch((err) => notice(err.message)); }
 });
 $("#new").onclick = () => openPicker();
@@ -1001,6 +1004,8 @@ $("#stage").onclick = () => $("#side").classList.remove("show");
     document.body.innerHTML = `<p style="padding:40px;color:#9a9aa2">Abrí Atril con <b style="color:#e6e6ea">atr open</b>: trae la llave de esta computadora.</p>`;
     return;
   }
+  initThemes();
+  setTimeout(initStar, 20000);   // not while the window is still opening
   feed(LOCAL);
   // the first lists arrive on the events socket; then show what was asked, or the last space
   const ready = setInterval(() => {
