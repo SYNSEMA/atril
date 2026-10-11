@@ -30,11 +30,13 @@
   </aside>
 
   <main id="main">
-    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal (Ctrl+Shift+T)">+</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span> terminal</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
         <p id="empty-title">Este space no tiene terminales.</p>
-        <p class="muted">Abrí una con <kbd>+</kbd>. Cerrar una pestaña no mata el programa: sigue corriendo<br>y la encontrás en <b>agents</b> o con <b>find</b>.</p>
+        <button id="open-term" class="bigbtn">▸ Abrir una terminal</button>
+        <p class="muted small-hint">o Enter · Ctrl+Shift+T</p>
+        <p class="muted">Cerrar una pestaña no termina el programa: sigue corriendo<br>y lo encontrás en <b>agents</b> o con la búsqueda.</p>
       </div>
     </section>
     <div id="keys" class="only-touch">

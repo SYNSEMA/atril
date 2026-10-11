@@ -977,6 +977,14 @@ $("#expand").onclick = () => setSide(true);
 setSide(store.get("side", true));
 
 $("#plus").onclick = askTitle;
+$("#open-term").onclick = () => newTab().catch((err) => notice(err.message));
+// with no terminal on screen, Enter or + open one (inside a terminal they are just keys)
+document.addEventListener("keydown", (e) => {
+  if ($("#empty").hidden || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if (!$("#palette").hidden || !$("#picker").hidden || !$("#conn").hidden || !$("#dialog").hidden) return;
+  if (e.key === "Enter" || e.key === "+") { e.preventDefault(); newTab().catch((err) => notice(err.message)); }
+});
 $("#new").onclick = () => openPicker();
 $("#adddev").onclick = openConnect;
 $("#find").onclick = openPalette;

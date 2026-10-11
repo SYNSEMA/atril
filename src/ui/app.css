@@ -95,14 +95,20 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .tab.on { background: var(--accent); color: #0b0b10; font-weight: 700; }
 .tab .x { opacity: .5; padding: 0 2px; }
 .tab .x:hover { opacity: 1; }
-#plus, #menu, #expand { padding: 0 12px; color: var(--muted); font-size: 16px; }
-#plus:hover, #menu:hover, #expand:hover { color: var(--text); }
+#menu, #expand { padding: 0 12px; color: var(--muted); font-size: 16px; }
+#menu:hover, #expand:hover { color: var(--text); }
+#plus { margin: 4px 6px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
+#plus span { font-size: 15px; font-weight: 700; }
+#plus:hover { background: var(--accent); color: #0b0b10; }
 #stage { flex: 1; position: relative; min-height: 0; overflow: hidden; }
 .term { position: absolute; inset: 0; padding: 6px 0 0 8px; }
 .term .ended { position: absolute; right: 16px; bottom: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 6px 6px 6px 12px; border-radius: 4px; display: flex; gap: 12px; align-items: center; z-index: 2; }
 .term .ended button { background: var(--accent); color: #0b0b10; font-weight: 700; padding: 4px 10px; border-radius: 3px; }
 #empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 0 16px; color: var(--text); }
 #empty p { margin: 6px 0; }
+#empty .bigbtn { justify-self: center; margin: 14px 0 4px; padding: 11px 22px; border-radius: 6px; background: var(--accent); color: #0b0b10; font-size: 15px; font-weight: 700; }
+#empty .bigbtn:hover { filter: brightness(1.1); }
+#empty .small-hint { font-size: 12px; margin-bottom: 18px; }
 
 /* palette + context menu */
 #palette { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; z-index: 10; }
