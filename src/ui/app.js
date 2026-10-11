@@ -123,7 +123,7 @@ function agentItem(s) {
   li.className = s.id === lastTab[current] && s.space === current ? "open" : "";
   li.title = tooltip(s);
   li.innerHTML = `<span class="st ${st === "idle" ? "bell" : st}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
-  li.querySelector(".name").textContent = s.name;
+  li.querySelector(".name").textContent = /^[a-z-]+-\d+$/.test(s.name) ? s.kind : s.name;   // untitled: the agent's name
   li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
   const title = s.title && s.status === "running" && !/[\\/].*\.(exe|cmd)$/i.test(s.title) ? s.title : null;
   li.querySelector(".sub").textContent = `${label(s)}${title ? " · " + title : ""}`;
