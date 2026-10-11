@@ -4,9 +4,10 @@
 -- by the program that uses it.
 
 -- a command to its end, in a pseudo-terminal: started by the console-less daemon it would otherwise
--- flash a console window of its own. Gives its exit code
+-- flash a console window of its own. Outside its own process group: what it opens (the browser) must
+-- outlive it, and closing a group ends everything in it. Gives its exit code
 task quietly(cmd, args)
-    let p be proc_spawn(cmd, args, {"pty": true})
+    let p be proc_spawn(cmd, args, {"pty": true, "process_group": false})
     let code be nothing
     let tries be 0
     while code == nothing and tries < 30
