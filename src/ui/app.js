@@ -482,8 +482,9 @@ function makeTerm(s) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
-  term.attachCustomKeyEventHandler(shortcuts);
   const t = { term, fit, el, ws: null, ctrl: false };
+  term.attachCustomKeyEventHandler((e) => shortcuts(e) && clipboardKeys(t, e));
+  clipboardMouse(t);
   terms.set(s.key, t);
   connect(s, t);
   term.onData((d) => {
@@ -500,6 +501,54 @@ function makeTerm(s) {
     }
   });
   return t;
+}
+
+// ---- copy and paste in a terminal, as in Windows Terminal: Ctrl+C copies when there is a selection
+// (else it is the program's Ctrl+C), Ctrl+V pastes, and so do Ctrl+Shift+C / Ctrl+Shift+V. When
+// the clipboard holds an image and no text, the program gets the key itself: agents (Claude Code,
+// OpenCode…) read the image from the clipboard on their own
+function copySelection(t) {
+  const text = t.term.getSelection();
+  if (!text) return false;
+  navigator.clipboard.writeText(text).catch(() => {});
+  t.term.clearSelection();
+  return true;
+}
+function clipboardKeys(t, e) {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return true;
+  if (e.code === "KeyC") {
+    if (e.type === "keydown" && t.term.hasSelection()) { copySelection(t); return false; }
+    return !e.shiftKey;   // Ctrl+Shift+C with nothing selected does nothing
+  }
+  // false: xterm leaves the key alone and the browser's own paste follows (the paste handler below)
+  if (e.code === "KeyV") return false;
+  return true;
+}
+// what a paste event brings: the text through xterm (bracketed paste included); an image alone, the key
+function pasteImageKey(t, data) {
+  const hasText = !!data.getData("text/plain");
+  const hasImage = [...(data.items || [])].some((i) => i.kind === "file" && i.type.startsWith("image/"));
+  if (!hasText && hasImage) { send(t, { t: "i", d: "\x16" }); return true; }
+  return false;
+}
+async function pasteClipboard(t) {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) { t.term.paste(text); return; }
+    const items = await navigator.clipboard.read();
+    if (items.some((i) => i.types.some((ty) => ty.startsWith("image/")))) send(t, { t: "i", d: "\x16" });
+  } catch {}
+}
+function clipboardMouse(t) {
+  t.el.addEventListener("paste", (e) => {
+    if (e.clipboardData && pasteImageKey(t, e.clipboardData)) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  // right click inside the terminal: copy the selection, or paste when there is none (no browser menu)
+  t.el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!copySelection(t)) pasteClipboard(t);
+    t.term.focus();
+  });
 }
 
 function connect(s, t) {
