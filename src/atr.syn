@@ -9,7 +9,11 @@
 --                                  it outlives every window. --attach shows it in this terminal
 --   atr claude | codex | … [args]  that agent in a new session here, shown in this terminal (over SSH
 --                                  too): Ctrl+] lets go of it and it keeps running; the app sees it
---   atr attach <session>           a session in this terminal; Ctrl+] lets go of it
+--   atr attach [session]           a session in this terminal; Ctrl+] lets go of it. Without one: the
+--                                  only one running, or the list of atr top
+--   atr top                        every session of this machine in this terminal, live: the arrows
+--                                  choose, Enter goes in, Ctrl+] comes back, n a new shell, x ends one.
+--                                  `atr` over SSH (no screen) shows it too
 --   atr ls [--json]                the sessions of this machine
 --   atr name <session> <title…>    give a session a title: what you do there, to find it later
 --   atr kill <session>             end the program of a session (id, name or pid)
@@ -38,7 +42,7 @@ use "./window.syn" as window
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
-let VERSION be "0.2.0"
+let VERSION be "0.3.0"
 
 task say(t)
     print(t)
@@ -128,6 +132,10 @@ task open_window(ref, fresh)
         give nothing
     let url be url_of(ref)
     when not WIN and platform()["os"] != "macos" and env("DISPLAY", "") == "" and env("WAYLAND_DISPLAY", "") == ""
+        -- over SSH: the list here, and the window's address for your computer
+        when ref == nothing
+            when top()
+                give nothing
         say("no screen here. From your computer:")
         say("  ssh -L 7172:127.0.0.1:7171 <this server>")
         say("  then open " + replace(url, ":7171/", ":7172/"))
@@ -188,10 +196,10 @@ let KEYS be {"enter": "\r", "tab": "\t", "backtab": ESC + "[Z", "backspace": dec
 task typed(ev)
     when ev["type"] == "paste"
         give ev["text"]
-    let out be get(KEYS, ev["key"], "")
-    when ev["key"] == "char"
+    let out be get(KEYS, get(ev, "key", ""), "")
+    when get(ev, "key", "") == "char"
         set out to ev["text"]
-        when ev["ctrl"] and length(out) == 1
+        when get(ev, "ctrl", false) and length(out) == 1
             let i be index_of("abcdefghijklmnopqrstuvwxyz", lower(out))
             when i != nothing
                 set out to decode(bytes([i + 1]), "utf8")
@@ -202,15 +210,17 @@ task typed(ev)
                 set out to decode(bytes([index_of("34567", out) + 27]), "utf8")
             otherwise when out in ["[", "\\", "^", "_"]
                 set out to decode(bytes([index_of("[\\]^_", out) + 27]), "utf8")
-    when ev["alt"] and out != ""
+    when get(ev, "alt", false) and out != ""
         set out to ESC + out
     give out
 
-task attach(ref)
+-- what a program may leave on when you let go of it: colors, a hidden cursor, mouse reports,
+-- bracketed paste, application keys, focus reports
+let RESET be ESC + "[0m" + ESC + "[?25h" + ESC + "[?1l" + ESC + "[?1000l" + ESC + "[?1002l" + ESC + "[?1003l" + ESC + "[?1006l" + ESC + "[?2004l" + ESC + "[?1004l"
+
+-- the session on screen until it ends, the link drops or Ctrl+]; gives why it stopped
+task attach_in(term, ref)
     let c be up()
-    let term be term_open({"ctrl_c": "key"})
-    when term == nothing
-        fail("atr attach needs a terminal; from a script, use the window (atr open " + ref + ")")
     let ws be ws_connect("ws://127.0.0.1:7171/api/sessions/" + ref + "/attach", headers(c))
     let size be term_size(term)
     ws_send(ws, json_encode({"t": "r", "cols": size["cols"], "rows": size["rows"]}))
@@ -238,20 +248,231 @@ task attach(ref)
                 set going to false
             otherwise when ev["type"] == "resize"
                 ws_send(ws, json_encode({"t": "r", "cols": ev["cols"], "rows": ev["rows"]}))
-            -- Ctrl+] lets go; terminals send it as the code of Ctrl+5, and it may come back as either
-            otherwise when ev["type"] == "key" and ev["key"] == "char" and ev["ctrl"] and ev["text"] in ["]", "5"]
+            -- Ctrl+] lets go; terminals send it as the code of Ctrl+5, and it may come back as either, or as
+            -- Ctrl+} (Windows reads the code back through the keyboard layout: } and ] share a key in Spanish)
+            otherwise when ev["type"] == "key" and get(ev, "key", "") == "char" and ev["ctrl"] and ev["text"] in ["]", "5", "}"]
                 set going to false
             otherwise
                 let k be typed(ev)
                 when k != ""
                     ws_send(ws, json_encode({"t": "i", "d": k}))
     ws_close(ws)
-    term_write(term, ESC + "[0m\r\n")
+    give why
+
+task attach(ref)
+    let term be term_open({"ctrl_c": "key"})
+    when term == nothing
+        fail("atr attach needs a terminal; from a script, use the window (atr open " + ref + ")")
+    let why be attach_in(term, ref)
+    term_write(term, RESET + "\r\n")
     term_close(term)
     when why == "soltaste"
         say("atril: soltaste " + ref + " y sigue corriendo. Volvé con: atr attach " + ref + "  (o en la app)")
     otherwise
         say("atril: " + ref + " " + why)
+
+-- ---- atr top: the sessions of this machine in this terminal, live, grouped by folder; the arrows
+-- choose one, Enter goes into it and Ctrl+] comes back to the list. For SSH, where there is no window
+
+-- the daemon's answer, or nothing: here an error must not leave the terminal in the list's screen
+task fetch(c, path)
+    try
+        let r be http_get(BASE + path, headers(c), nothing, 3)
+        give when ok of r then json of r otherwise nothing
+    recover e
+        give nothing
+
+-- in the window's words (ui/app.js label), with a color
+task state_of(s)
+    when s["status"] == "exited"
+        give ["terminó " + text(s["exit_code"]), "2"]
+    when s["bell"]
+        give ["te necesita", "33;1"]
+    when s["activity"] == "working"
+        give ["trabajando", "36"]
+    give [(when s["kind"] == "shell" then "inactiva" otherwise "esperándote"), "32"]
+
+task last_part(p)
+    give regex_replace(regex_replace(replace(text(p), "\\", "/"), "/+$", ""), "^.*/", "")
+
+task space_of(s)
+    give text(get(s, "space", s["cwd"]))
+
+-- the sessions of one folder together, the folders in the order they appeared
+task by_space(items)
+    let spaces be []
+    each s in items
+        when not (space_of(s) in spaces)
+            set spaces to spaces + [space_of(s)]
+    let res be []
+    each k in spaces
+        set res to res + where(items, (s) => space_of(s) == k)
+    give res
+
+-- one line of [text, color] parts cut to the width; the chosen one in reverse video
+task segs(parts, w, chosen)
+    let out be ""
+    let left be w
+    each g in parts
+        let t be text(g[0])
+        when length(t) > left
+            set t to slice(t, 0, left)
+        set left to left - length(t)
+        when t != ""
+            set out to out + (when chosen or g[1] == "" then t otherwise ESC + "[" + g[1] + "m" + t + ESC + "[0m")
+    when chosen
+        give ESC + "[7m" + out + pad("", left) + ESC + "[0m"
+    give out + ESC + "[K"
+
+task top_screen(items, out, sel, size, machine, note)
+    let w be size["cols"] - 1
+    let body be []
+    let at be 0
+    let space be nothing
+    let i be 0
+    each s in items
+        when space_of(s) != space
+            set space to space_of(s)
+            when length(body) > 0
+                set body to body + [ESC + "[K"]
+            set body to body + [segs([["  " + last_part(s["cwd"]), "1"], ["  " + text(s["cwd"]), "2"]], w, false)]
+        let st be state_of(s)
+        -- the title the program gave itself; a shell's is often only the path of its .exe
+        let t be text(get(s, "title", ""))
+        let title be when t != "" and t != s["name"] and regex_capture(t, "^[A-Za-z]:\\\\|^/|\\.[Ee][Xx][Ee]$") == nothing then "  " + t otherwise ""
+        when i == sel
+            set at to length(body)
+        set body to body + [segs([[(when i == sel then "  ▸ " otherwise "    "), ""], [pad(s["id"], 5), "2"],
+            [pad(regex_replace(last_part(s["cmd"]), "\\.[Ee][Xx][Ee]$", ""), 11), ""], [pad(st[0], 14), st[1]],
+            [pad(ago(s["started"]), 5), "2"], [s["name"], ""], [title, "2"]], w, i == sel)]
+        set i to i + 1
+    when length(items) == 0
+        set body to [segs([["  No hay sesiones. ", ""], ["n", "1"], [" abre tu shell en " + cwd() + "; atr claude (o codex, opencode…) un agente.", ""]], w, false)]
+    when length(out) > 0
+        set body to body + [ESC + "[K", segs([["  fuera de Atril: se ven, pero su pantalla está en otra terminal (arrancalos con atr <agente>)", "2"]], w, false)]
+        each o in out
+            set body to body + [segs([["    " + pad(o["kind"], 11) + "pid " + pad(o["pid"], 8) + (when o["cwd"] == nothing then "" otherwise o["cwd"]), "2"]], w, false)]
+    -- the body scrolls to keep the chosen session on screen
+    let room be size["rows"] - 4
+    when room < 1
+        set room to 1
+    let from be when at >= room then at - room + 1 otherwise 0
+    let lines be [segs([[" atril", "1"], [" · " + machine + " · " + text(length(items)) + (when length(items) == 1 then " sesión" otherwise " sesiones"), "2"]], w, false), ESC + "[K"]
+    let n be 0
+    while n < room
+        set lines to lines + [when from + n < length(body) then body[from + n] otherwise ESC + "[K"]
+        set n to n + 1
+    set lines to lines + [segs([["  " + note, "33"]], w, false)]
+    set lines to lines + [segs([[" ↑↓", "1"], [" elegir  ", "2"], ["Enter", "1"], [" entrar (Ctrl+] vuelve acá)  ", "2"], ["n", "1"], [" shell nueva  ", "2"], ["x", "1"], [" terminar  ", "2"], ["q", "1"], [" salir", "2"]], w, false)]
+    give ESC + "[H" + join(lines, "\r\n") + ESC + "[J"
+
+-- into a session from the list, and back; gives what to say under the list
+task went_in(term, c, s)
+    let why be "soltaste"
+    try
+        set why to attach_in(term, s["id"])
+    recover e
+        set why to text(e)
+    term_write(term, RESET + ESC + "[?1049h" + ESC + "[?25l" + ESC + "[2J")
+    give when why == "soltaste" then "soltaste " + s["name"] + ": sigue corriendo" otherwise s["name"] + ": " + why
+
+-- false when this is not a terminal
+task top()
+    let c be up()
+    let term be term_open({"ctrl_c": "key"})
+    when term == nothing
+        give false
+    term_write(term, ESC + "[?1049h" + ESC + "[?25l")
+    let size be term_size(term)
+    let items be []
+    let out be []
+    let sel be 0
+    let note be ""
+    let armed be nothing   -- the session a second x ends
+    let seen be ""
+    let next be 0
+    let dirty be true
+    let going be true
+    while going
+        when now() >= next
+            let got be fetch(c, "/api/sessions")
+            when got != nothing
+                set items to by_space(got["items"])
+            let o be fetch(c, "/api/outside")
+            set out to when o == nothing then [] otherwise o["items"]
+            when got == nothing
+                set note to "Atril no contesta en " + BASE
+            set next to now() + 1
+            let now_seen be json_encode(items) + json_encode(out) + note
+            when now_seen != seen
+                set seen to now_seen
+                set dirty to true
+        when sel > length(items) - 1
+            set sel to when length(items) > 0 then length(items) - 1 otherwise 0
+        when dirty
+            term_write(term, top_screen(items, out, sel, size, c["machine"], note))
+            set dirty to false
+        let ev be select({"keys": term}, 1)
+        when ev != nothing
+            set dirty to true
+            let k be get(ev, "key", "")
+            let ch be when k == "char" and not ev["ctrl"] then ev["text"] otherwise ""
+            let chosen be when length(items) > 0 then items[sel] otherwise nothing
+            when ev["type"] == "resize"
+                set size to {"cols": ev["cols"], "rows": ev["rows"]}
+            otherwise when ev["type"] == "eof"
+                set going to false
+            -- only the keys the list uses: a terminal may send more than one event for a key (on
+            -- Windows, Ctrl+] comes back as Ctrl+] and Ctrl+}), and the rest must not wipe the note
+            otherwise when ev["type"] == "key" and (ch in ["q", "k", "j", "n", "x"] or k in ["escape", "up", "down", "home", "end", "enter"] or (k == "char" and ev["ctrl"] and lower(ev["text"]) in ["c", "d"]))
+                when ch != "x"
+                    set armed to nothing
+                set note to ""
+                when k == "escape" or ch == "q" or (k == "char" and ev["ctrl"] and lower(ev["text"]) in ["c", "d"])
+                    set going to false
+                otherwise when k == "up" or ch == "k"
+                    set sel to when sel > 0 then sel - 1 otherwise sel
+                otherwise when k == "down" or ch == "j"
+                    set sel to when sel < length(items) - 1 then sel + 1 otherwise sel
+                otherwise when k == "home"
+                    set sel to 0
+                otherwise when k == "end"
+                    set sel to when length(items) > 0 then length(items) - 1 otherwise 0
+                otherwise when k == "enter" and chosen != nothing
+                    when chosen["status"] == "exited"
+                        set note to chosen["name"] + " ya terminó: x la saca de la lista"
+                    otherwise
+                        set note to went_in(term, c, chosen)
+                        set next to 0
+                otherwise when ch == "n"
+                    try
+                        let r be http_post(BASE + "/api/sessions", {"cwd": cwd()}, headers(c))
+                        when ok of r
+                            set note to went_in(term, c, json of r)
+                        otherwise
+                            set note to "no se pudo abrir: " + body of r
+                    recover e
+                        set note to "no se pudo abrir: " + text(e)
+                    set next to 0
+                otherwise when ch == "x" and chosen != nothing
+                    let gone be chosen["status"] == "exited"
+                    when armed != chosen["id"]
+                        set armed to chosen["id"]
+                        set note to "x otra vez " + (when gone then "saca " + chosen["name"] + " de la lista" otherwise "termina " + chosen["name"] + " (" + last_part(chosen["cmd"]) + ")")
+                    otherwise
+                        set armed to nothing
+                        try
+                            when gone
+                                http_delete(BASE + "/api/sessions/" + chosen["id"], headers(c))
+                            otherwise
+                                http_post(BASE + "/api/sessions/" + chosen["id"] + "/kill", {}, headers(c))
+                            set note to chosen["name"] + (when gone then " salió de la lista" otherwise " terminada")
+                        recover e
+                            set note to text(e)
+                        set next to 0
+    term_write(term, RESET + ESC + "[?1049l")
+    term_close(term)
+    give true
 
 -- the agents `atr <name>` starts here and shows in this terminal
 let AGENT_CMDS be ["claude", "codex", "opencode", "gemini", "lampson", "aider", "goose", "qwen", "crush", "droid", "copilot"]
@@ -316,9 +537,20 @@ otherwise when cmd == "rm"
     api("DELETE", "/api/sessions/" + rest[0], nothing)
     say("removed " + rest[0])
 otherwise when cmd == "attach" or cmd == "a"
+    -- without a session: the only one running, or the list to choose
     when length(rest) == 0
-        fail("atr attach <session>   (atr ls lists them)")
-    attach(rest[0])
+        let live be where(api("GET", "/api/sessions", nothing)["items"], (s) => s["status"] != "exited")
+        when length(live) == 0
+            fail("no hay sesiones vivas. `atr run` abre tu shell; `atr claude` (o codex, opencode…) un agente")
+        when length(live) == 1
+            attach(live[0]["id"])
+        otherwise when not top()
+            fail("atr attach <session>   (atr ls lists them)")
+    otherwise
+        attach(rest[0])
+otherwise when cmd == "top"
+    when not top()
+        fail("atr top needs a terminal; `atr ls` prints the list")
 otherwise when cmd in AGENT_CMDS
     new_session(["--attach", cmd] + rest)
 otherwise when cmd == "url"
@@ -336,4 +568,4 @@ otherwise when cmd == "down"
             set e to e
     say("atril stopped")
 otherwise
-    say("atr open [session] | claude|codex|… [args] | attach <s> | run [--name N] [--cwd D] [--open] [--attach] [cmd args…] | ls [--json] | name <s> <title> | kill <s> | rm <s> | url [session] | up | down")
+    say("atr open [session] | top | claude|codex|… [args] | attach [s] | run [--name N] [--cwd D] [--open] [--attach] [cmd args…] | ls [--json] | name <s> <title> | kill <s> | rm <s> | url [session] | up | down")
