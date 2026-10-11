@@ -736,11 +736,17 @@ task connect_flow(sock, req)
         when known["target"] == target and known["port"] == port
             give {"error": "Esa máquina ya está conectada.", "id": known["id"]}
     let m be {"id": "", "target": target, "port": port}
-    tell(sock, "Preparando la llave de Atril en esta computadora")
+    tell(sock, "Conectando con " + target)
     let pub be ensure_key()
-    tell(sock, "Probando entrar sin contraseña")
-    when not try_batch(m)
+    -- one trip when Atril's key already opens the door: that trip also asks for the other daemon
+    let up be remote_up(m)
+    when not up["ok"] and regex_find_all(text(up["error"]), "(Could not resolve|Connection refused|timed out|No route to host|Network is unreachable)")
+        give {"error": "No llego a " + target + ": " + trim(text(up["error"]))}
+    when not up["ok"] and regex_find_all(text(up["error"]), "REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed")
+        give {"error": "La identidad de " + target + " cambió desde la última vez. Si reinstalaste ese servidor, borrá su línea de ~/.atril/ssh/known_hosts; si no, no conectes."}
+    when not up["ok"] and regex_find_all(text(up["error"]), "Permission denied")
         -- your own SSH setup (a key, an agent) may already open the door: then it leaves Atril's key
+        tell(sock, "La llave de Atril todavía no está en esa máquina")
         let own be nothing
         try
             set own to run_quiet(ssh_tool("ssh"), ["-p", text(port), "-o", "BatchMode=yes", "-o", "UserKnownHostsFile=" + SSH_KNOWN,
@@ -748,8 +754,6 @@ task connect_flow(sock, req)
         recover e
             set own to {"out": text(e)}
         when not contains(own["out"], "ATRIL-KEY-OK")
-            when regex_find_all(own["out"], "(Could not resolve|Connection refused|timed out|No route to host)")
-                give {"error": "No llego a " + target + ": " + trim(own["out"])}
             tell(sock, "Esta máquina pide contraseña: la uso una sola vez, para dejar la llave de Atril. No se guarda.")
             let res be password_once(sock, m, pub)
             when res != nothing
@@ -757,8 +761,8 @@ task connect_flow(sock, req)
         tell(sock, "Probando la llave de Atril")
         when not try_batch(m)
             give {"error": "La llave quedó en la máquina pero no permite entrar. ¿Ese servidor acepta llaves (PubkeyAuthentication yes)?"}
-    tell(sock, "Buscando Atril en esa máquina")
-    let up be remote_up(m)
+        tell(sock, "Buscando Atril en esa máquina")
+        set up to remote_up(m)
     when not up["ok"]
         -- not there (or not starting): offer to install it, through this same link
         ws_send(sock, json_encode({"t": "ask", "what": "install", "msg": "Atril no está instalado en " + target + ". ¿Lo instalo? Va en ese usuario (~/.local), sin root; trae el motor de Synsema si falta. Tarda uno o dos minutos."}))

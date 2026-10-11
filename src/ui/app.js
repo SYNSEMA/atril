@@ -618,6 +618,19 @@ $("#picker").onclick = (e) => { if (e.target.id === "picker") closePicker(); };
 
 // ---- connect a machine: user@host, the password once if it asks, then the link stays open
 let connWs = null;
+let connTimer = null;
+const CONN_HINT = "La contraseña se usa una sola vez para dejar la llave de Atril. No se guarda.";
+// while a connection is being set up, the dialog says it is alive: seconds since you pressed Conectar
+function working(on) {
+  clearInterval(connTimer);
+  connTimer = null;
+  $("#cgo").disabled = on;
+  if (!on) { $("#cmsg").textContent = CONN_HINT; return; }
+  const t0 = Date.now();
+  const tick = () => { $("#cmsg").textContent = `Trabajando… ${Math.round((Date.now() - t0) / 1000)} s`; };
+  tick();
+  connTimer = setInterval(tick, 1000);
+}
 function openConnect() {
   $("#conn").hidden = false;
   $("#clog").innerHTML = "";
@@ -628,6 +641,7 @@ function openConnect() {
   $("#ctarget").focus();
 }
 function closeConnect() {
+  working(false);
   if (connWs) { connWs.close(); connWs = null; }
   $("#conn").hidden = true;
 }
@@ -642,13 +656,14 @@ function startConnect() {
   const target = $("#ctarget").value.trim();
   if (!/^[^@\s]+@[^@\s]+$/.test(target)) { logLine("Escribí usuario@dirección, por ejemplo root@203.0.113.7", "err"); return; }
   $("#clog").innerHTML = "";
-  $("#cgo").disabled = true;
+  working(true);
+  logLine("Conectando con " + target + "…");
   const ws = new WebSocket(WS + "/api/machines/connect");
   connWs = ws;
   ws.onopen = () => ws.send(JSON.stringify({ target, port: Number($("#cport").value) || 22, name: $("#cname").value.trim() }));
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.t === "step") logLine(m.msg);
+    if (m.t === "step") { if (!m.msg.startsWith("Conectando con ")) logLine(m.msg); }
     else if (m.t === "ask" && m.what === "install") {
       $("#cinstallmsg").textContent = m.msg;
       $("#cinstall").hidden = false;
@@ -663,18 +678,16 @@ function startConnect() {
       $("#cpass").hidden = true;
       $("#cinstall").hidden = true;
       const r = m.result || {};
+      working(false);
       if (r.ok) {
         logLine(`Listo: ${r.name} queda conectada y se reconecta sola.`, "ok");
         $("#cgo").hidden = true;
         setTimeout(closeConnect, 1500);
-      } else {
-        logLine(r.error || "No se pudo conectar.", "err");
-        $("#cgo").disabled = false;
-      }
+      } else logLine(r.error || "No se pudo conectar.", "err");
       connWs = null;
     }
   };
-  ws.onclose = () => { if (connWs === ws) { logLine("Se cortó la conexión con Atril.", "err"); $("#cgo").disabled = false; connWs = null; } };
+  ws.onclose = () => { if (connWs === ws) { logLine("Se cortó la conexión con Atril.", "err"); working(false); connWs = null; } };
 }
 $("#cpass").onsubmit = (e) => {
   e.preventDefault();
