@@ -113,7 +113,7 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .tab .x:hover { opacity: 1; }
 #menu, #expand { padding: 0 12px; color: var(--muted); font-size: 16px; }
 #menu:hover, #expand:hover { color: var(--text); }
-#plus { margin: 4px 6px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
+#plus { margin: 4px 6px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; display: flex; align-items: center; justify-content: center; line-height: 1; }
 #plus span { font-size: 15px; font-weight: 700; }
 #plus:hover { background: var(--accent); color: var(--on-accent); }
 #stage { flex: 1; position: relative; min-height: 0; overflow: hidden; }
@@ -344,8 +344,8 @@ b.ok { color: var(--ok); }
   #find kbd { display: none; }
   #fpin { display: none; }
   #plus .lbl { display: none; }
-  #plus { padding: 0 14px; }
-  #plus span { font-size: 18px; }
+  #plus { padding: 0 12px; }
+  #plus span { font-size: 17px; line-height: 1; }
 }
 @media (pointer: coarse) {
   #tabs { height: 42px; }

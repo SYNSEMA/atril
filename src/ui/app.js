@@ -485,10 +485,12 @@ function makeTerm(s) {
   const t = { term, fit, el, ws: null, ctrl: false };
   term.attachCustomKeyEventHandler((e) => shortcuts(e) && clipboardKeys(t, e));
   clipboardMouse(t);
+  el.addEventListener("pointerdown", () => claim(t));
   terms.set(s.key, t);
   connect(s, t);
   term.onData((d) => {
     if (t.ended || t.replaying) return;
+    claim(t);
     if (t.ctrl && d.length === 1) { d = String.fromCharCode(d.toUpperCase().charCodeAt(0) & 31); setCtrl(t, false); }
     send(t, { t: "i", d });
   });
@@ -559,7 +561,7 @@ function connect(s, t) {
   // until it is drawn
   t.replaying = true;
   let first = true;
-  ws.onopen = () => { t.fit.fit(); send(t, { t: "r", cols: t.term.cols, rows: t.term.rows }); };
+  ws.onopen = () => { t.fit.fit(); t.claimed = true; send(t, { t: "r", cols: t.term.cols, rows: t.term.rows }); };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.t === "o") {
@@ -577,7 +579,8 @@ function connect(s, t) {
       end.firstChild.textContent = `terminó · código ${m.code ?? "?"}`;
       end.lastChild.onclick = () => restart(s.key);
       t.el.append(end);
-    } else if (m.t === "error") closeTab(s.key);   // a session that is gone
+    } else if (m.t === "size") { if (!m.mine) t.claimed = false; }   // another window (a phone) set its size
+    else if (m.t === "error") closeTab(s.key);   // a session that is gone
   };
   ws.onclose = () => {
     // the daemon, the link or the network went away; the session may still be alive: try again
@@ -586,6 +589,18 @@ function connect(s, t) {
 }
 
 function send(t, m) { if (t.ws && t.ws.readyState === 1) t.ws.send(JSON.stringify(m)); }
+
+// one terminal, several windows (this computer, a phone) and one size: the window used last gets it back
+// when you type, touch it, or come back to it
+function claim(t) {
+  if (!t || t.claimed || !t.ws || t.ws.readyState !== 1) return;
+  t.claimed = true;
+  t.fit.fit();
+  send(t, { t: "r", cols: t.term.cols, rows: t.term.rows });
+}
+const claimActive = () => claim(terms.get(lastTab[current]));
+window.addEventListener("focus", claimActive);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) claimActive(); });
 
 window.addEventListener("resize", () => { const t = terms.get(lastTab[current]); if (t) t.fit.fit(); });
 

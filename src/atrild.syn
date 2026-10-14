@@ -10,6 +10,7 @@
 --
 --   bus  in.<id>    what reaches a session: {t: "i", d: keys} | {t: "r", cols, rows} | {t: "snap", to} | {t: "kill"}
 --   bus  out.<id>   what a session says:    {t: "o", s: seq, d: text} | {t: "snap", s, d, to} | {t: "exit", code}
+--                                           | {t: "size", cols, rows, by}: a window (by) set the size
 --   bus  sessions   the metadata of a session changed (the sidebar listens)
 --   state sess:<id> the metadata of each session, for listing
 --
@@ -585,6 +586,8 @@ agent Session
                             publish_meta(meta)
                     otherwise when m["t"] == "r"
                         proc_resize(p, m["cols"], m["rows"])
+                        -- one terminal, several windows (this computer, a phone): the others learn the size changed
+                        bus_publish("out." + sid, {"t": "size", "cols": m["cols"], "rows": m["rows"], "by": get(m, "by")})
                     otherwise when m["t"] == "kill"
                         -- TERM first, so a program can close in order; an interactive bash ignores it,
                         -- so KILL if it is still there 3 s later
@@ -2343,6 +2346,8 @@ serve on 7171
                         stop
                     let m be clean_input(json_decode(ev["data"], nothing))
                     when m != nothing
+                        when m["t"] == "r"
+                            set m["by"] to me
                         bus_publish("in." + sid, m)
                 otherwise when ev != nothing
                     let m be ev["data"]
@@ -2356,6 +2361,8 @@ serve on 7171
                             ws_send(socket, json_encode({"t": "o", "d": m["d"]}))
                     otherwise when m["t"] == "exit"
                         ws_send(socket, json_encode(m))
+                    otherwise when m["t"] == "size"
+                        ws_send(socket, json_encode({"t": "size", "cols": m["cols"], "rows": m["rows"], "mine": get(m, "by") == me}))
 
 -- the links to the other machines open again with the daemon
 cron_after(1, start_links)
