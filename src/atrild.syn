@@ -434,6 +434,60 @@ task file_diff(root, rel)
     let out be take_tmp(name)
     give when code != 0 or out == nothing then "" otherwise slice(out, 0, FILE_MAX * 2)
 
+-- ---- a file shown as it looks (a PDF, an image, a slide deck): its bytes, in base64 inside JSON so
+-- they travel the same way as everything else (the tunnel to another machine and the phone's relay
+-- carry JSON). The window gives them their type by the name, never by what they say they are.
+-- Office files (pptx, docx, xlsx, odp…) become a PDF first, through LibreOffice when the machine has
+-- it: headless, with a profile of its own (so a LibreOffice you have open does not get in the way), and
+-- kept under ~/.atril/tmp/conv until the file changes
+
+let RAW_MAX be 25000000      -- bytes of a file the viewer shows as it looks
+let CONV_DIR be GIT_TMP + "/conv"
+
+task soffice_path()
+    let found be nothing
+    each c in ["C:/Program Files/LibreOffice/program/soffice.exe", "C:/Program Files (x86)/LibreOffice/program/soffice.exe",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice", "/usr/bin/soffice", "/usr/bin/libreoffice",
+            "/usr/local/bin/soffice", "/snap/bin/libreoffice", "/opt/homebrew/bin/soffice"]
+        when found == nothing and file_info(c)["exists"]
+            set found to c
+    give found
+
+task file_raw(root, rel)
+    let real be abs_in(root, rel)
+    let info be file_info(real)
+    when not info["exists"]
+        give {"path": rel, "gone": true}
+    when info["is_dir"]
+        give {"path": rel, "error": "es una carpeta"}
+    when info["size"] > RAW_MAX
+        give {"path": rel, "too_big": true, "size": info["size"], "modified": info["modified"]}
+    give {"path": rel, "size": info["size"], "modified": info["modified"], "data": decode(read_file_bytes(real), "base64")}
+
+-- an Office file as a PDF: {pdf: base64, size, modified} with the file's own size and date (the viewer
+-- compares those to know when to ask again), {no_office: true} without LibreOffice, {error} when it fails
+task file_as_pdf(root, rel)
+    let real be abs_in(root, rel)
+    let info be file_info(real)
+    when not info["exists"]
+        give {"path": rel, "gone": true}
+    when info["size"] > RAW_MAX
+        give {"path": rel, "too_big": true, "size": info["size"], "modified": info["modified"]}
+    let office be soffice_path()
+    when office == nothing
+        give {"path": rel, "no_office": true, "size": info["size"], "modified": info["modified"]}
+    let id be decode(sha256(real + "|" + text(info["modified"]) + "|" + text(info["size"])), "hex")
+    let dir be CONV_DIR + "/" + slice(id, 0, 24)
+    let name be regex_replace(regex_replace(rel, "^.*/", ""), "\\.[^.]*$", "") + ".pdf"
+    when not file_info(dir + "/" + name)["exists"]
+        write_file("~/.atril/tmp/conv/" + slice(id, 0, 24) + "/.keep", "")   -- makes the folder (file.write is granted as ~/.atril/*)
+        let profile be "file:///" + regex_replace(GIT_TMP + "/lo-profile", "^/", "")
+        let code be run_in(dir, office, ["-env:UserInstallation=" + profile, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", dir, real], 120)
+        when not file_info(dir + "/" + name)["exists"]
+            give {"path": rel, "error": "LibreOffice no pudo convertirlo (código " + text(code) + ").", "size": info["size"], "modified": info["modified"]}
+    let pdf be read_file_bytes(dir + "/" + name)
+    give {"path": rel, "size": info["size"], "modified": info["modified"], "pdf_size": length(pdf), "data": decode(pdf, "base64")}
+
 -- ---- your own themes: every ~/.atril/themes/<name>.json that reads as a map (ui/themes/README.md
 -- says the format). The window lists them next to the ones that come with Atril, no rebuild needed
 task user_themes()
@@ -489,6 +543,7 @@ agent Session
     let seq be 0
     let buf be ""
     let last_out be now()
+    let last_in be 0            -- the last key that reached the program
     let screen be ""            -- the last few thousand characters as a person reads them
     let screen_kind be nothing  -- the agent the screen shows running, when it shows one
     let folder be nothing       -- where the shell last said it was
@@ -525,14 +580,26 @@ agent Session
                 set buf to buf + chunk
                 when length(buf) > KEEP * 2
                     set buf to slice(buf, length(buf) - KEEP)
-                set last_out to now()
                 bus_publish("out." + sid, {"t": "o", "s": seq, "d": chunk})
-                let changed be meta["activity"] != "working"
-                set meta["activity"] to "working"
+                let changed be false
                 let t be title_in(chunk)
                 when t != nothing and t != meta["title"]
                     set meta["title"] to t
                     set changed to true
+                -- working is output you can see, and not the echo of a key just pressed: an agent at rest
+                -- still sends a few invisible codes now and then (mouse modes, paste mode), and every
+                -- letter typed in its prompt comes back. Claude Code also says it in its title: ✳ at
+                -- rest, a spinner while it works
+                let resting be meta["kind"] == "claude" and starts_with(text(meta["title"]), "✳")
+                when resting
+                    when meta["activity"] == "working"
+                        set meta["activity"] to "idle"
+                        set changed to true
+                otherwise when now() - last_in > 1 and trim(strip_ansi(chunk)) != ""
+                    set last_out to now()
+                    when meta["activity"] != "working"
+                        set meta["activity"] to "working"
+                        set changed to true
                 -- what runs now: the title an agent sets, else what was typed at the prompt or what the
                 -- agent printed, else the program the session started with
                 -- reading the screen is a nicety: a mistake in it must never take the terminal down
@@ -580,6 +647,7 @@ agent Session
                 -- being closed"): drop it; the program's exit arrives as its own event and ends the session
                 try
                     when m["t"] == "i"
+                        set last_in to now()
                         proc_send(p, m["d"])
                         when meta["bell"]
                             set meta["bell"] to false
@@ -915,7 +983,8 @@ task password_once(sock, m, pub)
 
 let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "remote.syn", "qr.syn", "relay.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/files.js", "ui/star.js", "ui/theme.js", "ui/app.css",
     "ui/themes/oscuro.json", "ui/themes/claro.json", "ui/themes/papel.json", "ui/themes/contraste.json", "ui/icon.svg",
-    "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js", "ui/vendor/highlight.min.js"]
+    "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js", "ui/vendor/highlight.min.js",
+    "ui/vendor/marked.min.js", "ui/vendor/purify.min.js"]
 
 task install_script(port, key)
     let fetch_each be "for f in " + join(SOURCES, " ") + "; do curl -fsS -H 'Authorization: Bearer " + key + "' \"http://127.0.0.1:" + text(port) + "/api/source/$f\" -o \"$D/$f\"; done; "
@@ -2107,6 +2176,32 @@ serve on 7171
         when root == nothing or rel == nothing or rel == "."
             give not_found("No hay tal archivo en ese space.")
         give file_read(root, rel)
+
+    -- which of these paths (seen in a terminal) are a file or a folder of the space: the window turns
+    -- only those into links. Up to 50 at a time; a path that would leave the space is not answered
+    route "POST /api/files/exist" requires auth
+        let b be json of request
+        let root be space_root(when b == nothing then "" otherwise get(b, "space", ""))
+        when root == nothing
+            give not_found("Ese space no está en esta máquina.")
+        let asked be get(b, "paths", [])
+        let found be {}
+        each p in slice(when type_of(asked) == "list" then asked otherwise [], 0, 50)
+            let rel be clean_rel(p)
+            when rel != nothing and rel != "."
+                let info be file_info(abs_in(root, rel))
+                when info["exists"]
+                    set found[rel] to (when info["is_dir"] then "dir" otherwise "file")
+        give {"found": found}
+
+    -- a file as it looks: its bytes (a PDF, an image), or an Office file turned into a PDF
+    route "GET /api/files/raw" requires auth
+        timeout none
+        let root be space_root(get(query, "space", ""))
+        let rel be clean_rel(get(query, "path", ""))
+        when root == nothing or rel == nothing or rel == "."
+            give not_found("No hay tal archivo en ese space.")
+        give when get(query, "as", "") == "pdf" then file_as_pdf(root, rel) otherwise file_raw(root, rel)
 
     route "GET /api/files/diff" requires auth
         let root be space_root(get(query, "space", ""))

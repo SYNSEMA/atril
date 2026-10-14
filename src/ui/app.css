@@ -88,6 +88,9 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #spaces .meta { color: var(--dim); font-size: 12px; }
 #spaces .branch { grid-column: 2 / 4; color: var(--branch); font-size: 13px; }
 #spaces .branch:empty { display: none; }
+#spaces li.more { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 28px; color: var(--muted); font-size: 12px; }
+#spaces li.more:hover { color: var(--text); }
+#spaces li.more .st { margin-left: -16px; }
 #spaces { overflow-y: auto; max-height: 45%; }
 #agents .none { color: var(--dim); font-size: 12px; cursor: default; display: block; }
 #agents { overflow-y: auto; flex: 1; padding-bottom: 30px; }
@@ -100,11 +103,16 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #agents .group { color: var(--dim); font-size: 12px; padding: 8px 8px 2px; cursor: default; display: block; }
 
 .st { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--off); }
-.st.working { background: var(--busy); box-shadow: 0 0 6px var(--busy); }
-.st.idle { background: var(--ok); }
-.st.bell { background: var(--warn); box-shadow: 0 0 6px var(--warn); animation: pulse 1s infinite alternate; }
+/* one color per meaning, and solid in every theme: working is the accent, finished-and-not-seen is
+   green, only a real call for you is orange, and it rings around the dot instead of fading it */
+.st.working { background: var(--accent); }
+.st.idle, .st.done { background: var(--ok); }
+.st.wait { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dim); }
+.st.bell { background: var(--warn); animation: ring 1.4s ease-out infinite; }
 .st.exited { background: var(--off); }
 @keyframes pulse { to { opacity: .4; } }
+@keyframes ring { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 60%, transparent); } to { box-shadow: 0 0 0 6px transparent; } }
+@media (prefers-reduced-motion: reduce) { .st.bell { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 35%, transparent); } }
 
 /* tabs + terminal */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -225,6 +233,14 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #filesbtn { margin: 4px 0 4px auto; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 13px; white-space: nowrap; }
 #filesbtn:hover { color: var(--text); border-color: var(--muted); }
 #filesbtn.on { color: var(--accent); border-color: var(--accent); }
+/* the file minimized: its name, to open it again where you left it */
+#vchips { display: flex; gap: 6px; margin: 4px 0 4px auto; min-width: 0; overflow: hidden; }
+#vchips:not(:empty) + #filesbtn { margin-left: 6px; }
+.vchip { display: flex; align-items: center; min-width: 0; max-width: 200px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font-size: 13px; }
+.vchip:hover { background: var(--hover); }
+.vchip .n { padding: 0 4px 0 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; }
+.vchip .x { padding: 0 7px 0 3px; color: var(--muted); }
+.vchip .x:hover { color: var(--text); }
 #files { flex: none; position: relative; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
 #fgrip { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; }
 #fgrip:hover { background: var(--accent); opacity: .35; }
@@ -252,6 +268,7 @@ b.ok { color: var(--ok); }
 .fr { display: flex; align-items: baseline; gap: 6px; padding: 2px 10px 2px 8px; font-size: 13px; cursor: pointer; white-space: nowrap; color: var(--text); }
 .fr:hover { background: var(--hover); }
 .fr.on { background: var(--sel); }
+.fr.flash { background: var(--sel); transition: background .2s; }
 .fr .tw { flex: none; width: 10px; color: var(--dim); font-size: 11px; }
 .fr .nm { overflow: hidden; text-overflow: ellipsis; }
 .fr.dir .nm { color: var(--soft); }
@@ -276,11 +293,51 @@ b.ok { color: var(--ok); }
 #vmode { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; flex: none; }
 #vmode button { padding: 2px 10px; color: var(--muted); font-size: 12px; }
 #vmode button.on { background: var(--accent); color: var(--on-accent); font-weight: 700; }
-#vclose { color: var(--muted); padding: 3px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; flex: none; }
-#vclose:hover { color: var(--text); border-color: var(--muted); }
-#vbody { flex: 1; overflow: auto; min-height: 0; }
+.vh .vbtn { color: var(--muted); padding: 3px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; flex: none; }
+.vh .vbtn:hover { color: var(--text); border-color: var(--muted); }
+#vbody { flex: 1; overflow: auto; min-height: 0; outline: none; }
 #vbody pre { margin: 0; font: 13px/1.55 var(--mono); tab-size: 4; }
-.src { display: flex; min-width: max-content; min-height: 100%; }
+.src { position: relative; display: flex; min-width: max-content; min-height: 100%; }
+/* a file as it looks: a PDF fills the viewer (its own toolbar scrolls it); an image sits in the middle
+   on a checkerboard, so a transparent one shows what is transparent */
+#vbody:has(> .docpdf) { overflow: hidden; }
+.docpdf { display: block; width: 100%; height: 100%; border: 0; background: var(--panel); }
+.docimg { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: repeating-conic-gradient(var(--panel) 0 25%, var(--bg) 0 50%) 0 0 / 16px 16px; }
+.docimg img { max-width: 100%; max-height: calc(100vh - 140px); height: auto; box-shadow: 0 1px 8px var(--shade); }
+.docimg img.svg { width: min(480px, 100%); }   /* an SVG with only a viewBox has no size of its own */
+/* a Markdown file, drawn to be read: a column of text in the theme's colors */
+.md { max-width: 860px; margin: 0 auto; padding: 22px 32px 60px; font: 15px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); overflow-wrap: break-word; }
+.md > :first-child { margin-top: 0; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 1.5em 0 .6em; line-height: 1.25; font-weight: 700; }
+.md h1 { font-size: 1.9em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
+.md h2 { font-size: 1.45em; padding-bottom: .25em; border-bottom: 1px solid var(--line); }
+.md h3 { font-size: 1.2em; }
+.md h4, .md h5, .md h6 { font-size: 1em; }
+.md h6 { color: var(--muted); }
+.md p, .md ul, .md ol, .md blockquote, .md table, .md pre { margin: 0 0 1em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md ul, .md ol { padding-left: 1.8em; }
+.md li + li { margin-top: .25em; }
+.md li > ul, .md li > ol { margin: .25em 0 0; }
+.md li:has(> input[type=checkbox]) { list-style: none; margin-left: -1.4em; }
+.md input[type=checkbox] { margin: 0 .45em 0 0; vertical-align: -1px; }
+.md a { color: var(--accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md strong { font-weight: 700; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 1.6em 0; }
+.md blockquote { padding: 0 1em; color: var(--muted); border-left: 3px solid var(--line); }
+.md code { font: .88em var(--mono); padding: .15em .35em; border-radius: 4px; background: var(--hover); }
+.md pre { padding: 12px 14px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); overflow: auto; }
+#vbody .md pre { margin: 0 0 1em; font: 13px/1.5 var(--mono); }
+.md pre code { padding: 0; background: none; font-size: inherit; }
+.md table { border-collapse: collapse; display: block; max-width: 100%; overflow: auto; }
+.md th, .md td { padding: 6px 12px; border: 1px solid var(--line); }
+.md th { font-weight: 700; background: var(--panel); }
+.md img { max-width: 100%; }
+@media (max-width: 720px) { .md { padding: 16px 16px 48px; } }
+.src .vline { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--accent) 16%, transparent); pointer-events: none; }
 .src .gut { position: sticky; left: 0; flex: none; padding: 10px 14px 10px 12px; text-align: right; color: var(--dim); background: var(--bg); border-right: 1px solid var(--line); user-select: none; }
 .src .txt { padding: 10px 16px; }
 .src code { font: inherit; }

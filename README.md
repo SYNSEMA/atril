@@ -133,6 +133,9 @@ connect another); a **space** is a folder (with its git branch), its **tabs** ar
 there (+ asks for an optional title; double-click a tab to change it), and **agents** lists only
 agents, from every space of every machine, plus the agents that run **outside Atril** (seen, not
 attachable: start them with `atr claude` to have them). **new** opens a picker with your recent repositories and a folder browser.
+The sidebar shows the three spaces you used last; **ver todos** shows the rest. A dot says one thing
+each: blue, working; green, an agent finished and you have not looked yet; orange and ringing, it needs
+you (it rang the bell). An agent you already saw, waiting for your next message, has no dot.
 
 **archivos** (Ctrl+Shift+E) opens a panel on the right with the files of the space on screen: what git
 sees changed (modified, new, deleted) listed first, then the tree with the same colors. A click opens
@@ -140,6 +143,20 @@ the file with its colors, or its diff since the last commit; it updates by itsel
 Read only, and only inside your spaces; it works on the other machines too (with this version of Atril there).
 It floats over the terminal (a program that lays itself out by width, like OpenCode, keeps its layout);
 **fijar** docks it beside the terminal instead.
+
+A path printed in a terminal (what an agent says it wrote: `src/app.js`, `src\app.js:12`, a full path
+inside the space) is a link: a click opens the file in the same viewer, at that line, and a folder opens
+in the panel. Only paths that exist in the space of that terminal are underlined.
+
+A Markdown file opens drawn, to be read (**archivo** shows its text, **diff** what changed); its links
+to other files of the space open them in the viewer. A PDF or an image shows as it looks, and so do
+Office files (pptx, docx, xlsx, odp…): the machine of the space turns them into a PDF with
+[LibreOffice](https://www.libreoffice.org/) when it has it, without opening a window, and keeps that
+PDF until the file changes.
+
+**minimizar** (or Esc) goes back to the terminal and leaves the file's name above it, to open it again
+where you were; several can wait there, one per file, and opening another file, closing one or closing
+the panel does not lose them (× next to a name forgets it). **cerrar** puts away the file on screen.
 
 **◐ tema**, at the bottom of the sidebar: dark, light, paper, high contrast, or yours, and either one
 always or one for the day and one for the night (by the system's setting or by the hour). A theme is a

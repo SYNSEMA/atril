@@ -71,7 +71,7 @@ function label(s) {
   if (st === "exited") return "terminó";
   if (st === "bell") return "te necesita";
   if (st === "working") return "trabajando";
-  return isAgent(s) ? "esperándote" : "inactiva";
+  return isAgent(s) ? (unseen.has(s.key) ? "terminó, sin ver" : "esperándote") : "inactiva";
 }
 const allSessions = () => [...sessions.values()];
 const inSpace = (sid) => allSessions().filter((s) => spaceId(s.mid, s.space) === sid).sort((a, b) => a.started - b.started);
@@ -127,7 +127,21 @@ function feed(mid) {
     if (mid === LOCAL || (mm && mm.status === "up")) setTimeout(() => feed(mid), 2000);
   };
 }
-function put(mid, s) { sessions.set(skey(mid, s.id), { ...s, mid, key: skey(mid, s.id) }); }
+// an agent that finished its work while you were looking elsewhere: green until you open its tab
+const unseen = new Set();
+function put(mid, s) {
+  const key = skey(mid, s.id), prev = sessions.get(key);
+  if (prev && prev.activity === "working" && s.activity !== "working" && s.status === "running" && (key !== lastTab[current] || document.hidden)) unseen.add(key);
+  sessions.set(key, { ...s, mid, key });
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && unseen.delete(lastTab[current])) renderSide(); });
+// the dot of a session: bell (it asks for you), working, done (finished, not seen yet), exited; an
+// agent you already saw waiting gets `idle` (a hollow ring where a list wants one, else nothing)
+function dotOf(s, idle = "none") {
+  const st = statusOf(s);
+  if (st !== "idle") return st;
+  return isAgent(s) && unseen.has(s.key) ? "done" : isAgent(s) ? idle : "none";
+}
 
 // the machines this daemon keeps linked: open a feed for each one that is up
 function setMachines(list) {
@@ -166,6 +180,15 @@ function selectMachine(mid) {
   const want = spaceOf(lastSpace[mid]) ? lastSpace[mid] : (busy || list[0]) ? spaceId(mid, (busy || list[0]).key) : null;
   if (want) selectSpace(want);
   else { current = null; showOnly(null); renderSide(); }
+}
+
+const SPACES_SHOWN = 3;
+const spaceUsed = store.get("spaceUsed", {});   // space id -> when you last were in it
+let spacesAll = store.get("spacesAll", false);
+function useSpace(sid) {
+  if (!sid || Date.now() - (spaceUsed[sid] || 0) < 1000) return;
+  spaceUsed[sid] = Date.now();
+  store.set("spaceUsed", spaceUsed);
 }
 
 function renderSide() {
@@ -211,7 +234,29 @@ function renderSide() {
     li.textContent = `Ningún space en ${machineName(mm)} todavía: «+ nuevo» abre una carpeta.`;
     ul.append(li);
   }
-  for (const sp of list) ul.append(spaceItem(mm, sp));
+  // the ones used last first; three of them unless you ask for all (the one on screen is always there)
+  const used = (sp) => spaceUsed[spaceId(mm.mid, sp.key)] || 0;
+  const sorted = list.map((sp, i) => [sp, i]).sort((a, b) => used(b[0]) - used(a[0]) || a[1] - b[1]).map((x) => x[0]);
+  let shown = sorted;
+  if (!spacesAll && sorted.length > SPACES_SHOWN + 1) {
+    shown = sorted.slice(0, SPACES_SHOWN);
+    const cur = sorted.find((sp) => spaceId(mm.mid, sp.key) === current);
+    if (cur && !shown.includes(cur)) shown = [...shown.slice(0, SPACES_SHOWN - 1), cur];
+  }
+  for (const sp of shown) ul.append(spaceItem(mm, sp));
+  if (sorted.length > SPACES_SHOWN + 1) {
+    const rest = sorted.filter((sp) => !shown.includes(sp));
+    const li = document.createElement("li");
+    li.className = "more";
+    li.textContent = spacesAll ? "ver menos" : `ver todos (${sorted.length})`;
+    // a hidden space where an agent needs you, or finished, says so on the button
+    const waiting = rest.flatMap((sp) => inSpace(spaceId(mm.mid, sp.key)).filter((s) => s.status === "running").map((s) => dotOf(s)));
+    const dot = ["bell", "done"].find((d) => waiting.includes(d));
+    if (dot) li.insertAdjacentHTML("afterbegin", `<span class="st ${dot}"></span>`);
+    li.title = spacesAll ? "Mostrar solo los últimos usados" : rest.map((sp) => sp.name).join(", ");
+    li.onclick = () => { spacesAll = !spacesAll; store.set("spacesAll", spacesAll); renderSide(); };
+    ul.append(li);
+  }
 
   const agents = allSessions().filter(isAgent);
   $("#count").textContent = agents.length ? `${agents.filter((s) => s.status === "running").length} vivos` : "";
@@ -267,11 +312,11 @@ function spaceItem(mm, sp) {
   li.className = sid === current ? "on" : "";
   li.title = sp.path;
   const running = list.filter((s) => s.status === "running");
-  const needs = running.some((s) => isAgent(s) && statusOf(s) !== "working");
-  const busy = running.some((s) => statusOf(s) === "working");
-  // a dot only when there is something to look at: an agent waiting for you, or work going on
-  li.title = sp.path + (needs ? "\nun agente te espera" : busy ? "\nalgo está trabajando" : "");
-  li.innerHTML = `<span class="st ${needs ? "bell" : busy ? "working" : "none"}"></span><span class="name"></span><span class="meta"></span><span class="branch"></span>`;
+  // a dot only when there is something to look at: what asks for you first, then what finished, then work going on
+  const dots = running.map((s) => dotOf(s));
+  const dot = ["bell", "done", "working"].find((d) => dots.includes(d)) || "none";
+  li.title = sp.path + ({ bell: "\nun agente te necesita", done: "\nun agente terminó y no lo viste", working: "\nalgo está trabajando" }[dot] || "");
+  li.innerHTML = `<span class="st ${dot}"></span><span class="name"></span><span class="meta"></span><span class="branch"></span>`;
   li.querySelector(".name").textContent = sp.name;
   li.querySelector(".meta").textContent = running.length || "";
   li.querySelector(".branch").textContent = sp.branch || "";
@@ -285,7 +330,7 @@ function agentItem(s) {
   const st = statusOf(s);
   li.className = s.key === lastTab[current] ? "open" : "";
   li.title = tooltip(s);
-  li.innerHTML = `<span class="st ${st === "idle" ? "bell" : st}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
+  li.innerHTML = `<span class="st ${dotOf(s, "wait")}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
   li.querySelector(".name").textContent = untitled(s) ? s.kind : s.name;
   li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
   const title = s.title && s.status === "running" && !/[\\/].*\.(exe|cmd)$/i.test(s.title) ? s.title : null;
@@ -301,6 +346,7 @@ function agentItem(s) {
 // ---- spaces and tabs
 function selectSpace(sid) {
   current = sid;
+  useSpace(sid);
   if (sid) { lastSpace[sid.split("|")[0]] = sid; store.set("lastSpace", lastSpace); }
   const sp = spaceOf(sid);
   if (sp && sp.mid !== machineSel) { machineSel = sp.mid; store.set("machine", machineSel); }
@@ -323,8 +369,7 @@ function renderTabs() {
     el.className = "tab" + (s.key === lastTab[current] ? " on" : "");
     el.dataset.key = s.key;
     el.ondblclick = (e) => { if (e.target !== el.querySelector(".x")) renameTab(s.key); };
-    const st = statusOf(s);
-    el.innerHTML = `<span class="st ${st === "idle" && isAgent(s) ? "bell" : st === "idle" ? "none" : st}"></span><span class="t"></span><button class="x"></button>`;
+    el.innerHTML = `<span class="st ${dotOf(s)}"></span><span class="t"></span><button class="x"></button>`;
     el.querySelector(".t").textContent = tabName(s, i);
     const x = el.querySelector(".x");
     x.textContent = "×";
@@ -362,8 +407,10 @@ function focusTab(key) {
   if (!s) return;
   lastTab[spaceId(s.mid, s.space)] = key;
   store.set("lastTab2", lastTab);
+  useSpace(spaceId(s.mid, s.space));
+  unseen.delete(key);
   const t = terms.get(key) || makeTerm(s);
-  if (typeof VIEW !== "undefined" && VIEW) closeViewer();   // a tab chosen: back to the terminal
+  if (typeof VIEW !== "undefined" && VIEW) minimizeViewer(false);   // a tab chosen: back to the terminal, the file waits
   showOnly(key);
   requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); });
   renderSide();
@@ -478,6 +525,7 @@ function makeTerm(s) {
     fontFamily: getComputedStyle(document.body).getPropertyValue("--mono"),
     fontSize: 14, cursorBlink: true, allowProposedApi: true, scrollback: 10000,
     theme: termTheme(), minimumContrastRatio: termContrast(),   // theme.js
+    linkHandler: termLinkHandler(s.key),                        // files.js
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -485,6 +533,7 @@ function makeTerm(s) {
   const t = { term, fit, el, ws: null, ctrl: false };
   term.attachCustomKeyEventHandler((e) => shortcuts(e) && clipboardKeys(t, e));
   clipboardMouse(t);
+  fileLinks(t, s.key);   // files.js: a path printed in the terminal opens with a click
   el.addEventListener("pointerdown", () => claim(t));
   touchScroll(el);
   terms.set(s.key, t);

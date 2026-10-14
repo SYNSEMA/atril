@@ -34,7 +34,7 @@
   </aside>
 
   <main id="main">
-    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span><span class="lbl"> terminal</span></button><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span><span class="lbl"> terminal</span></button><span id="vchips"></span><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
         <p id="empty-title">Este space no tiene terminales.</p>
@@ -43,8 +43,8 @@
         <p class="muted">Cerrar una pestaña no termina el programa: sigue corriendo<br>y lo encontrás en <b>agents</b> o con la búsqueda.</p>
       </div>
       <div id="viewer" hidden>
-        <div class="vh"><span id="vpath"></span><span id="vmeta" class="muted"></span><span class="sp"></span><span id="vmode" hidden><button data-m="file">archivo</button><button data-m="diff">diff</button></span><button id="vclose" title="Volver a la terminal (Esc)">× cerrar</button></div>
-        <div id="vbody"></div>
+        <div class="vh"><span id="vpath"></span><span id="vmeta" class="muted"></span><span class="sp"></span><span id="vmode" hidden><button data-m="read">leer</button><button data-m="doc">ver</button><button data-m="file">archivo</button><button data-m="diff">diff</button></span><button id="vmin" class="vbtn" title="Volver a la terminal y dejar el archivo a mano: «archivo» arriba lo reabre donde estabas (Esc)">— minimizar</button><button id="vclose" class="vbtn" title="Cerrar el archivo">× cerrar</button></div>
+        <div id="vbody" tabindex="-1"></div>
       </div>
     </section>
     <div id="keys" class="only-touch">
@@ -168,6 +168,8 @@
 <script src="vendor/xterm.min.js"></script>
 <script src="vendor/addon-fit.min.js"></script>
 <script src="vendor/highlight.min.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
 <script src="app.js"></script>
 <script src="files.js"></script>
 <script src="star.js"></script>
