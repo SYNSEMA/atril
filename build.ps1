@@ -12,7 +12,7 @@ Remove-Item (Join-Path $dist "atril.exe") -ErrorAction SilentlyContinue   # olde
 Push-Location (Join-Path $root "src")   # the static mount ./ui and the modules resolve from here
 try {
     # atr.syn and install.sh travel inside: "Conectar máquina" installs Atril on a machine that has none
-    synsema build atrild.syn -o (Join-Path $dist "atrild.exe") --serve --no-console --icon $icon --include atr.syn --include install.sh
+    synsema build atrild.syn -o (Join-Path $dist "atrild.exe") --serve --no-console --icon $icon --include atr.syn --include qr.syn --include relay.syn --include install.sh
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
     synsema build atr.syn -o (Join-Path $dist "atr.exe") --icon $icon
     if ($LASTEXITCODE) { exit $LASTEXITCODE }

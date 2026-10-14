@@ -1,0 +1,35 @@
+require random
+use "./remote.syn" as r
+-- the two sides of a handshake, and records both ways
+let d be ecdh_keypair("X25519")
+let p be ecdh_keypair("X25519")
+let ep be ecdh_keypair("X25519")
+let ed be ecdh_keypair("X25519")
+let np be random_bytes(16)
+let nd be random_bytes(16)
+let h be r.transcript(ep["public"], p["public"], d["public"], ed["public"], np, nd)
+-- phone
+let kp be r.derive(ecdh_shared_secret(ep["private"], d["public"], "X25519"), ecdh_shared_secret(p["private"], ed["public"], "X25519"), ecdh_shared_secret(ep["private"], ed["public"], "X25519"), h)
+-- daemon
+let kd be r.derive(ecdh_shared_secret(d["private"], ep["public"], "X25519"), ecdh_shared_secret(ed["private"], p["public"], "X25519"), ecdh_shared_secret(ed["private"], ep["public"], "X25519"), h)
+let rec be r.seal(kd["h2c"], 0, {"t": "ready"})
+test "phone opens what the daemon sealed"
+    assert_eq(r.unseal(kp["h2c"], 0, rec), {"t": "ready"})
+test "a wrong counter does not open"
+    assert_eq(r.unseal(kp["h2c"], 1, rec), nothing)
+test "the other direction's key does not open"
+    assert_eq(r.unseal(kp["c2h"], 0, rec), nothing)
+test "a tampered record does not open"
+    assert_eq(r.unseal(kp["h2c"], 0, "A" + slice(rec, 1, length(rec))), nothing)
+test "an impostor without P cannot derive the keys"
+    let x be ecdh_keypair("X25519")
+    let kx be r.derive(ecdh_shared_secret(ep["private"], d["public"], "X25519"), ecdh_shared_secret(x["private"], ed["public"], "X25519"), ecdh_shared_secret(ep["private"], ed["public"], "X25519"), h)
+    assert_eq(r.unseal(kx["h2c"], 0, rec), nothing)
+test "nonce is 12 bytes, big-endian counter"
+    assert_eq(r.b64(r.nonce(258)), r.b64(bytes([0,0,0,0,0,0,0,0,0,0,1,2])))
+test "paths"
+    assert(r.allowed_path("/api/sessions?x=1"))
+    assert(not r.allowed_path("/api/remote/pair"))
+    assert(not r.allowed_path("/api/shutdown"))
+    assert(not r.allowed_path("/ui/app.js"))
+    assert(not r.allowed_path("/api/../ui/app.js"))

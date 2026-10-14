@@ -765,16 +765,18 @@ function working(on) {
   tick();
   connTimer = setInterval(tick, 1000);
 }
-function openConnect() {
+function openConnect(tab) {
   $("#conn").hidden = false;
+  connTab(tab || "phone");
   $("#clog").innerHTML = "";
   $("#cpass").hidden = true;
   $("#cinstall").hidden = true;
   $("#cgo").hidden = false;
   $("#cgo").disabled = false;
-  $("#ctarget").focus();
+  if (!$("#cssh").hidden) $("#ctarget").focus();
 }
 function closeConnect() {
+  phoneStop();
   working(false);
   if (connWs) { connWs.close(); connWs = null; }
   $("#conn").hidden = true;
@@ -840,6 +842,283 @@ $("#cgo").onclick = startConnect;
 $("#ccancel").onclick = closeConnect;
 $("#ctarget").onkeydown = (e) => { if (e.key === "Enter") startConnect(); };
 $("#conn").onclick = (e) => { if (e.target.id === "conn") closeConnect(); };
+
+// ---- a phone: where the relay runs (one question at a time, Atril does the work), then the QR
+function connTab(t) {
+  $("#cphone").hidden = t !== "phone";
+  $("#cssh").hidden = t !== "ssh";
+  for (const b of document.querySelectorAll(".ctabs button")) b.classList.toggle("on", b.dataset.tab === t);
+  if (t === "phone") phoneStart(); else phoneStop();
+}
+for (const b of document.querySelectorAll(".ctabs button")) b.onclick = () => { connTab(b.dataset.tab); if (b.dataset.tab === "ssh") $("#ctarget").focus(); };
+
+const phone = { timer: null, poll: null, known: null, place: null, mode: null, ws: null };
+function phoneStop() {
+  clearInterval(phone.timer);
+  clearInterval(phone.poll);
+  phone.timer = phone.poll = null;
+  if (phone.ws) { phone.ws.close(); phone.ws = null; }
+}
+function view(v) {
+  for (const el of document.querySelectorAll("#cphone .pv")) el.hidden = el.id !== "pv-" + v;
+}
+// how long, in words: 3 min, 5 h, 41 días
+function dur(sec) {
+  if (sec == null) return "";
+  if (sec < 3600) return Math.max(1, Math.round(sec / 60)) + " min";
+  if (sec < 172800) return Math.round(sec / 3600) + " h";
+  return Math.round(sec / 86400) + " días";
+}
+async function phoneStart() {
+  phoneStop();
+  view("places");
+  $("#places").innerHTML = '<p class="loading">Buscando tus dispositivos y midiendo cada uno…</p>';
+  try {
+    const r = await api("GET", "/api/remote/relay");
+    if (r.setup) { showQr(r); return; }
+  } catch {}
+  showPlaces();
+}
+
+// step 1: the devices it can run on, with what was measured on each
+async function showPlaces() {
+  view("places");
+  const box = $("#places");
+  box.innerHTML = '<p class="loading">Buscando tus dispositivos y midiendo cada uno…</p>';
+  let r;
+  try { r = await api("GET", "/api/remote/places"); } catch (e) { box.innerHTML = ""; box.append(line(e.message, "warn")); return; }
+  box.innerHTML = "";
+  for (const p of r.places) {
+    const facts = [];
+    if (p.this) {
+      facts.push("esta computadora");
+      if (p.up != null) facts.push(`prendida hace ${dur(p.up)}`);
+    } else {
+      facts.push(p.host);
+      if (p.link !== "up") facts.push("no responde ahora");
+      else {
+        if (p.up != null) facts.push(`prendido hace ${dur(p.up)}`);
+        facts.push(p.drops ? `su conexión se cortó ${p.drops} ${p.drops === 1 ? "vez" : "veces"} desde que abriste Atril` : `conectado sin cortes desde hace ${dur(Date.now() / 1000 - p.since)}`);
+      }
+    }
+    const why = p.this ? "Para el teléfono, esta computadora ya tiene que estar prendida: el relay acá no suma otro equipo que dependa de estar prendido." : "";
+    box.append(card(p.name, facts.join(" · "), why, p.link && p.link !== "up", () => { phone.place = p; showHow(); }));
+  }
+  if (r.synsema) {
+    box.append(card("Relay de Synsema", "atril.synsema.io · corre en nuestros servidores",
+      "Lo usás si no tenés otro dispositivo donde correrlo. Solo pasa datos cifrados entre tu teléfono y esta computadora: no puede leerlos. El teléfono llega mientras esta computadora esté prendida y con Atril abierto.",
+      false, () => { phone.place = { id: "synsema", name: "Synsema" }; run("synsema"); }));
+  } else {
+    box.append(line("¿Otro servidor? Conectalo en «Servidor o computadora» y aparece acá.", "muted"));
+  }
+}
+function card(title, facts, why, off, go) {
+  const b = document.createElement("button");
+  b.className = "card";
+  b.disabled = off;
+  const t = document.createElement("b");
+  t.textContent = title;
+  const f = document.createElement("span");
+  f.className = "muted";
+  f.textContent = facts;
+  b.append(t, f);
+  if (why) { const w = document.createElement("span"); w.className = "why"; w.textContent = why; b.append(w); }
+  b.onclick = go;
+  return b;
+}
+function line(text, cls) {
+  const p = document.createElement("p");
+  p.className = cls || "";
+  p.textContent = text;
+  return p;
+}
+
+// step 2: a domain of yours, a tunnel, or not now (a server answers by its IP: the Android app reaches it)
+function showHow() {
+  const p = phone.place;
+  view("how");
+  $("#howtitle").textContent = p.this ? "¿Dominio propio o túnel?" : `¿Dominio propio o túnel en ${p.name}?`;
+  const box = $("#hows");
+  box.innerHTML = "";
+  box.append(card("Dominio propio", p.this ? "un dominio tuyo apuntando a esta computadora" : `un dominio tuyo apuntando a ${p.host}`,
+    p.this ? "Solo si esta computadora recibe conexiones de internet en los puertos 80 y 443. En una casa casi nunca pasa: el router no las deja entrar." : "Atril saca el certificado; si ese servidor ya tiene un edge en el 443, se suma a él.",
+    false, () => showDomain()));
+  box.append(card("Túnel Synsema", "una dirección https fija, sin dominio ni puertos abiertos",
+    p.this ? "Hace falta tu cuenta de Synsema en esta computadora (syn login)." : `Hace falta tu cuenta de Synsema en ${p.name} (syn login).`,
+    false, () => run("tunnel")));
+  if (!p.this) {
+    box.append(card("Ahora no", `por la IP de ${p.host}`,
+      "Funciona con la app de Android. Desde el navegador del teléfono hace falta dominio o túnel: lo agregás después con «cambiar».",
+      false, () => run("ip")));
+  }
+}
+
+// step 2b: which domain, and where it has to point
+function showDomain() {
+  const p = phone.place;
+  view("domain");
+  $("#pdomainhint").textContent = p.this
+    ? "Creá un registro A de ese dominio con la IP pública de tu conexión, y en tu router mandá los puertos 80 y 443 a esta computadora."
+    : `Creá un registro A de ese dominio que apunte a ${p.host}. Si ya existe, seguí.`;
+  $("#pdomain").focus();
+}
+$("#pdomaingo").onclick = () => {
+  const d = $("#pdomain").value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d)) { $("#pdomainhint").textContent = "Escribí un dominio, por ejemplo relay.tudominio.com"; return; }
+  run("domain", d);
+};
+$("#pdomain").onkeydown = (e) => { if (e.key === "Enter") $("#pdomaingo").click(); };
+
+// step 3: Atril does it, and says what it is doing
+function run(mode, domain) {
+  phone.mode = mode;
+  phone.domain = domain || "";
+  const p = phone.place;
+  view("work");
+  $("#worktitle").textContent = mode === "synsema" ? "Usando el relay de Synsema" : p.this ? "Preparando el relay en esta computadora" : `Preparando el relay en ${p.name}`;
+  $("#worklog").innerHTML = "";
+  $("#workerr").hidden = true;
+  $("#workbtns").hidden = true;
+  $("#worklogin").hidden = true;
+  $("#workspin").hidden = false;
+  const ws = new WebSocket(WS + "/api/remote/setup");
+  phone.ws = ws;
+  ws.onopen = () => ws.send(JSON.stringify({ place: p.id, mode, domain: phone.domain }));
+  ws.onmessage = async (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === "step") { const li = document.createElement("li"); li.textContent = m.msg; $("#worklog").append(li); }
+    else if (m.t === "login") {
+      $("#loginurl").href = m.url;
+      $("#loginurl").textContent = m.url;
+      $("#logincode").textContent = m.code;
+      $("#worklogin").hidden = false;
+    } else if (m.t === "done") {
+      phone.ws = null;
+      $("#workspin").hidden = true;
+      $("#worklogin").hidden = true;
+      const r = m.result || {};
+      if (r.ok) { showQr(await api("GET", "/api/remote/relay").catch(() => null)); return; }
+      $("#workerr").textContent = r.error || "No se pudo.";
+      $("#workerr").hidden = false;
+      $("#workbtns").hidden = false;
+    }
+  };
+  ws.onclose = () => { if (phone.ws === ws) { phone.ws = null; $("#workspin").hidden = true; $("#workerr").textContent = "Se cortó la conexión con Atril."; $("#workerr").hidden = false; $("#workbtns").hidden = false; } };
+}
+$("#workretry").onclick = () => run(phone.mode, phone.domain);
+for (const b of document.querySelectorAll("#cphone .back")) b.onclick = () => {
+  const v = b.closest(".pv").id;
+  if (v === "pv-domain") showHow();
+  else if (v === "pv-work" && phone.mode === "domain") showDomain();
+  else if (v === "pv-work" && phone.place && phone.place.id !== "synsema") showHow();
+  else showPlaces();
+};
+$("#loginopen").onclick = () => window.open($("#loginurl").href, "_blank", "noopener");
+
+// step 4: the QR, the phones, and where the relay runs (measured from here)
+const MODE = { ip: "por IP", domain: "dominio", tunnel: "túnel", synsema: "" };
+function showQr(r) {
+  view("qr");
+  const s = (r && r.setup) || {};
+  const host = r ? r.relay.replace(/^wss?:\/\//, "") : "";
+  const where = s.place === "synsema" ? "Relay de Synsema" : s.place === "local" ? "Relay en esta computadora" : `Relay en ${s.name}`;
+  const ms = r && r.probe && r.probe.ok && r.probe.ms != null ? ` · un mensaje va y vuelve en ${r.probe.ms} ms` : r && r.probe && !r.probe.ok ? " · no responde ahora" : "";
+  $("#relaynow").textContent = `${where}${MODE[s.mode] ? " (" + MODE[s.mode] + ")" : ""} · ${host}${ms}`;
+  $("#relaynow").className = r && r.probe && !r.probe.ok ? "warn" : "muted";
+  $("#qripnote").hidden = s.mode !== "ip";
+  newCode();
+  paintPhones();
+  phone.poll = setInterval(paintPhones, 2000);
+}
+// the phones that are not connected right now keep the old address: they will need a new code
+const pairedCount = () => $("#phones").querySelectorAll("button").length;
+$("#relaychg").onclick = async () => {
+  if (pairedCount()) {
+    const ok = await ask("¿Cambiar el relay?\nLos teléfonos conectados ahora se pasan solos. Uno que esté apagado o sin conexión en este momento va a tener que escanear un código nuevo.\nEl relay de ahora se apaga cuando el nuevo funcione.",
+      [{ label: "Cancelar", value: false }, { label: "Cambiar", value: true, kind: "primary" }]);
+    if (!ok) return;
+  }
+  phoneStop();
+  showPlaces();
+};
+$("#relayoff").onclick = async () => {
+  const ok = await ask("¿Quitar el relay?\nAtril lo apaga (y su túnel o su dominio, si tiene). " + (pairedCount() ? "Tus teléfonos siguen emparejados pero no pueden conectarse hasta que elijas otro relay, y van a tener que escanear un código nuevo." : "Para conectar un teléfono vas a tener que elegir otro."),
+    [{ label: "Cancelar", value: false }, { label: "Quitar relay", value: true, kind: "danger" }]);
+  if (!ok) return;
+  phoneStop();
+  view("places");
+  $("#places").innerHTML = '<p class="loading">Apagando el relay…</p>';
+  await api("POST", "/api/remote/relay/remove").catch(() => {});
+  showPlaces();
+};
+async function newCode() {
+  clearInterval(phone.timer);
+  $("#qrmsg").textContent = "";
+  $("#qrmsg").className = "";
+  $("#qrbox").className = "";
+  $("#qrbox").innerHTML = "";
+  $("#qrexp").textContent = "Generando…";
+  try {
+    const known = await api("GET", "/api/remote/devices");
+    phone.known = new Set(known.devices.map((d) => d.id));
+    const p = await api("POST", "/api/remote/pair");
+    $("#qrbox").innerHTML = p.svg;
+    const end = Date.now() + p.expires_in * 1000;
+    const tick = () => {
+      const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+      if (left > 0) { $("#qrexp").textContent = `Sirve una vez. Vence en ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.`; return; }
+      clearInterval(phone.timer);
+      $("#qrbox").className = "used";
+      $("#qrexp").textContent = "Este código venció.";
+    };
+    tick();
+    phone.timer = setInterval(tick, 1000);
+  } catch (e) { $("#qrexp").textContent = "No se pudo generar el código: " + e.message; }
+}
+async function paintPhones() {
+  let r;
+  try { r = await api("GET", "/api/remote/devices"); } catch { return; }
+  const ul = $("#phones");
+  ul.innerHTML = "";
+  if (!r.devices.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "Ninguno todavía.";
+    ul.append(li);
+  }
+  for (const d of r.devices) {
+    const li = document.createElement("li");
+    const n = document.createElement("span");
+    n.textContent = d.name;
+    const w = document.createElement("span");
+    w.className = "muted";
+    w.textContent = ` · emparejado hace ${ago(d.created)} · último uso hace ${ago(d.last)}`;
+    const x = document.createElement("button");
+    x.className = "mini danger";
+    x.textContent = "quitar";
+    x.onclick = async () => {
+      const ok = await ask(`¿Quitar ${d.name}?\nSi está conectado se corta ahora, y no puede volver a entrar sin un código nuevo.`,
+        [{ label: "Cancelar", value: false }, { label: "Quitar", value: true, kind: "danger" }]);
+      if (!ok) return;
+      await api("POST", `/api/remote/devices/${encodeURIComponent(d.id)}/remove`).catch(() => {});
+      paintPhones();
+    };
+    li.append(n, w, x);
+    ul.append(li);
+  }
+  // a new phone came in with this code: it is used
+  const fresh = phone.known && r.devices.find((d) => !phone.known.has(d.id));
+  if (fresh) {
+    phone.known.add(fresh.id);
+    clearInterval(phone.timer);
+    $("#qrbox").className = "used";
+    $("#qrexp").textContent = "";
+    $("#qrmsg").className = "ok";
+    $("#qrmsg").textContent = `Listo: ${fresh.name} quedó emparejado.`;
+  }
+}
+$("#qrnew").onclick = newCode;
+$("#pclose").onclick = closeConnect;
 
 
 // ---- Atril's dialogs: ask() gives the value of the button pressed, or null (Esc, a click outside)
@@ -912,7 +1191,7 @@ async function updateMachine(mm) {
   const ok = await ask(`¿Actualizar Atril en ${machineName(mm)} a la versión de esta computadora (${myVersion})?\nLo que corre en Atril allá se cierra; los spaces quedan.`,
     [{ label: "Cancelar", value: false }, { label: "Actualizar", value: true, kind: "primary" }]);
   if (!ok) return;
-  openConnect();
+  openConnect("ssh");
   $("#cgo").hidden = true;
   working(true);
   logLine(`Actualizando Atril en ${machineName(mm)}…`);
@@ -1042,7 +1321,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === "+") { e.preventDefault(); newTab().catch((err) => notice(err.message)); }
 });
 $("#new").onclick = () => openPicker();
-$("#adddev").onclick = openConnect;
+$("#adddev").onclick = () => openConnect("phone");
 $("#find").onclick = openPalette;
 $("#menu").onclick = () => $("#side").classList.toggle("show");
 $("#stage").onclick = () => $("#side").classList.remove("show");

@@ -1,0 +1,86 @@
+-- remote.syn — the cryptography between a phone and this daemon, through a relay that must learn
+-- nothing. Pure tasks (no `require`: atrild.syn declares them); the link itself is the Remote agent
+-- in atrild.syn.
+--
+-- Keys
+--   D   this daemon's X25519 key, made once and kept in ~/.atril/remote.json. Its public half goes in
+--       the pairing QR, so the phone knows exactly whom it talks to (pinned: a relay that swaps it
+--       cannot finish the handshake).
+--   P   the phone's X25519 key, made in its browser and never exportable. The daemon keeps the public
+--       half of each paired phone in ~/.atril/remote-devices.json; removing it cuts that phone.
+--
+-- Handshake (one per connection, like Noise's KK): each side brings a fresh ephemeral key (Ep, Ed).
+--   phone → {v: 1, e: Ep, s: P, n: 16 random bytes, c: pairing code | null, name}
+--   daemon → {v: 1, e: Ed, n: 16 random bytes}          (only for a paired P, or a valid code)
+--   h   = sha256("atril-remote/v1" ‖ Ep ‖ P ‖ D ‖ Ed ‖ np ‖ nd)
+--   ck1 = HKDF(DH(Ep, D),  salt h,   "atril 1")    only the real daemon can compute it
+--   ck2 = HKDF(DH(P, Ed),  salt ck1, "atril 2")    only the paired phone can compute it
+--   k   = HKDF(DH(Ep, Ed), salt ck2, "atril c2h" | "atril h2c")
+-- The last DH is between two keys that die with the connection: someone who steals D (or P) later
+-- cannot open a recorded connection (forward secrecy).
+--
+-- Records: AES-256-GCM, one key per direction, nonce = 4 zero bytes ‖ 8-byte counter (starting at 0,
+-- +1 per record, never repeated with a key), additional data "atril-remote/v1". A record that does not
+-- open, or arrives out of order, ends the connection. The daemon speaks first after the handshake
+-- ({t: "ready"}): the phone knows the keys match before it sends anything.
+
+let PROTO be "atril-remote/v1"
+
+export task b64(x)
+    give decode(x, "base64url")
+
+export task unb64(t)
+    give bytes(text(t), "base64url")
+
+-- the room of the relay for a daemon's public key: unguessable, and the same on every start
+export task room_of(public)
+    give slice(b64(sha256(public)), 0, 22)
+
+-- 12-byte nonce for a record counter
+export task nonce(counter)
+    let out be [0, 0, 0, 0]
+    let i be 7
+    while i >= 0
+        set out to append(out, (counter // pow(256, i)) % 256)
+        set i to i - 1
+    give bytes(out)
+
+-- the handshake hash: every public value of the handshake, in a fixed order
+export task transcript(ep, p, d, ed, np, nd)
+    give sha256(bytes(PROTO) + ep + p + d + ed + np + nd)
+
+-- the two record keys from the three DH results (secrets: they are used, never read)
+export task derive(dh1, dh2, dh3, h)
+    let ck1 be hkdf_sha256(dh1, h, bytes("atril 1"), 32)
+    let ck2 be hkdf_sha256(dh2, ck1, bytes("atril 2"), 32)
+    give {"c2h": hkdf_sha256(dh3, ck2, bytes("atril c2h"), 32), "h2c": hkdf_sha256(dh3, ck2, bytes("atril h2c"), 32)}
+
+-- one record: a value → base64url text
+export task seal(key, counter, value)
+    give b64(aes_gcm_encrypt(key, nonce(counter), bytes(json_encode(value)), bytes(PROTO)))
+
+-- one record back, or nothing when it does not open (wrong key, wrong counter, tampered)
+export task unseal(key, counter, t)
+    let raw be nothing
+    try
+        set raw to unb64(t)
+    recover e
+        give nothing
+    let plain be aes_gcm_decrypt(key, nonce(counter), raw, bytes(PROTO), nothing)
+    when plain == nothing
+        give nothing
+    give json_decode(decode(plain, "utf8_lossy"), nothing)
+
+-- a phone's id: short, stable, from its public key
+export task device_id(public)
+    give slice(b64(sha256(public)), 0, 12)
+
+-- what a phone may ask of this daemon through the link: the window's API, nothing else. Pairing and
+-- the list of phones are managed only from this computer.
+export task allowed_path(p)
+    let path be split(text(p), "?")[0]
+    when not starts_with(path, "/api/")
+        give false
+    when starts_with(path, "/api/remote") or starts_with(path, "/api/source") or path == "/api/shutdown"
+        give false
+    give not contains(path, "..")

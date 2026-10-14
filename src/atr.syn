@@ -21,6 +21,13 @@
 --   atr url [session]              the address of the window with its key (for a browser elsewhere,
 --                                  through `ssh -L 7172:127.0.0.1:7171 <server>`: change the port)
 --   atr up | atr down              start the daemon | stop it (and every session with it)
+--   atr pair                       a QR for your phone: scanned, the phone opens this machine's window
+--                                  through the relay, encrypted end to end (one use, 5 minutes)
+--   atr devices [rm <id>]          the paired phones; rm cuts one at once
+--   atr relay [use <address>|use synsema]
+--                                  the relay the phones come through, and how long it takes to answer
+--                                  from here; `use` moves to another one (yours: see src/relay.syn) and
+--                                  the phones connected now come along
 
 require net("127.0.0.1:7171")
 require file.read("~/.atril/*")
@@ -39,6 +46,7 @@ require stdin
 require file.read(".")      -- the folder you are in: where `atr run` and `atr claude` start
 
 use "./window.syn" as window
+use "./qr.syn" as qr
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
@@ -510,6 +518,74 @@ task new_session(rest)
     when open
         open_window(s["id"], false)
 
+-- "hace 3 min" from a unix time
+task ago(t)
+    when t == nothing
+        give "nunca"
+    let d be floor(now() - t)
+    when d < 60
+        give "recién"
+    when d < 3600
+        give "hace " + text(d // 60) + " min"
+    when d < 86400
+        give "hace " + text(d // 3600) + " h"
+    give "hace " + text(d // 86400) + " días"
+
+task pair()
+    let before be apply(api("GET", "/api/remote/devices", nothing)["devices"], (d) => d["id"])
+    let p be api("POST", "/api/remote/pair", {})
+    say("Escaneá este código con la cámara del teléfono (vale " + text(p["expires_in"] // 60) + " minutos, un solo uso):")
+    say("")
+    say(qr.terminal(qr.encode(p["url"])))
+    say("")
+    say("o abrí en el teléfono: " + p["url"])
+    say("")
+    say("Esperando al teléfono… (Ctrl+C para salir; el código sigue valiendo hasta que venza)")
+    let until be now() + p["expires_in"]
+    while now() < until
+        sleep(2)
+        each d in api("GET", "/api/remote/devices", nothing)["devices"]
+            when not (d["id"] in before)
+                say("✓ emparejado: " + d["name"] + " (" + d["id"] + "). Lo quitás con `atr devices rm " + d["id"] + "`.")
+                give nothing
+    say("El código venció sin que se use. `atr pair` da otro.")
+
+task devices(rest)
+    when length(rest) >= 2 and rest[0] == "rm"
+        api("POST", "/api/remote/devices/" + rest[1] + "/remove", {})
+        say("quitado " + rest[1] + ": ya no puede entrar, y si estaba conectado se cortó")
+        give nothing
+    let r be api("GET", "/api/remote/devices", nothing)
+    when length(r["devices"]) == 0
+        say("ningún teléfono emparejado. `atr pair` empareja uno.")
+        give nothing
+    each d in r["devices"]
+        say(d["id"] + "  " + d["name"] + "  emparejado " + ago(d["created"]) + ", último uso " + ago(d["last"]))
+    let l be r["link"]
+    say("")
+    say("relay: " + (when l == nothing then "sin conexión" otherwise l["status"] + (when l["error"] != nothing then " (" + l["error"] + ")" otherwise "")))
+
+task relay_show(r)
+    when r["relay"] == nothing
+        say("sin relay: elegí dónde corre en la ventana (Agregar dispositivo → Teléfono)")
+        give nothing
+    let pr be r["probe"]
+    let who be when r["relay"] == r["default"] then " (el de Synsema)" otherwise " (tuyo)"
+    say("relay: " + r["relay"] + who)
+    say(when not pr["ok"] then "no responde: " + text(pr["error"]) otherwise when pr["ms"] != nothing then "un mensaje va y vuelve en " + text(pr["ms"]) + " ms desde esta computadora" otherwise "responde")
+    when r["env"]
+        say("(lo fija ATRIL_RELAY en el entorno del daemon)")
+
+task relay(rest)
+    when length(rest) >= 2 and rest[0] == "use"
+        let addr be when rest[1] == "synsema" then "wss://atril.synsema.io" otherwise rest[1]
+        relay_show(api("POST", "/api/remote/relay", {"relay": addr}))
+        say("los teléfonos conectados ahora se pasan solos; uno que no estaba conectado tiene que escanear un código nuevo")
+        give nothing
+    when length(rest) > 0
+        fail("atr relay [use <dirección>|use synsema]")
+    relay_show(api("GET", "/api/remote/relay", nothing))
+
 let a be args()
 let cmd be when length(a) == 0 then "open" otherwise a[0]
 let rest be when length(a) > 1 then slice(a, 1) otherwise []
@@ -560,6 +636,12 @@ otherwise when cmd == "version" or cmd == "--version"
 otherwise when cmd == "up"
     let c be up()
     say("atril is running on " + BASE + " (" + c["machine"] + ")")
+otherwise when cmd == "pair"
+    pair()
+otherwise when cmd == "relay"
+    relay(rest)
+otherwise when cmd == "devices"
+    devices(rest)
 otherwise when cmd == "down"
     when alive()
         try
@@ -568,4 +650,4 @@ otherwise when cmd == "down"
             set e to e
     say("atril stopped")
 otherwise
-    say("atr open [session] | top | claude|codex|… [args] | attach [s] | run [--name N] [--cwd D] [--open] [--attach] [cmd args…] | ls [--json] | name <s> <title> | kill <s> | rm <s> | url [session] | up | down")
+    say("atr open [session] | top | claude|codex|… [args] | attach [s] | run [--name N] [--cwd D] [--open] [--attach] [cmd args…] | ls [--json] | name <s> <title> | kill <s> | rm <s> | url [session] | pair | devices [rm <id>] | relay [use <address>] | up | down")

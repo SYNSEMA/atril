@@ -22,8 +22,9 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 - [ ] Installable PWA, `.msi`/`.dmg`, signed binaries, smaller executables
 - [x] `atr attach` inside your current terminal, and `atr top`: every session, live, in the terminal
 - [x] Other machines through SSH: `user@host`, the password once, a link that reopens by itself
-- [ ] Other machines without SSH, through an end-to-end encrypted relay (v0.3)
-- [ ] Phone: key bar is there; push when an agent needs you (v0.3)
+- [x] Your phone, from anywhere: `atr pair` shows a QR; the phone opens this machine's window through
+      a relay, encrypted end to end (the relay sees nothing; see [SECURITY.md](SECURITY.md))
+- [ ] Phone: push when an agent needs you; the app pinned and updated only when signed
 
 ## Install
 
@@ -79,6 +80,8 @@ atr ls                         # every session: name, pid, state
 atr open review                # the window, on that tab (or Atril from the Start menu)
 atr kill review                # end the program
 atr down                       # stop the daemon and every session
+atr pair                       # a QR for your phone: it opens this machine's window from anywhere
+atr devices                    # the paired phones; `atr devices rm <id>` cuts one at once
 ```
 
 **A server, in the same window**: on your computer, **+ conectar máquina** → `user@ip` (and the

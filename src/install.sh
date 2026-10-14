@@ -35,7 +35,7 @@ command -v synsema >/dev/null 2>&1 || { echo "install.sh: needs the Synsema engi
 
 stop_atril
 mkdir -p "$BIN"
-( cd "$ROOT" && synsema build atrild.syn -o "$BIN/atrild" --serve --include atr.syn --include install.sh && synsema build atr.syn -o "$BIN/atr" )
+( cd "$ROOT" && synsema build atrild.syn -o "$BIN/atrild" --serve --include atr.syn --include qr.syn --include relay.syn --include install.sh && synsema build atr.syn -o "$BIN/atr" )
 
 if [ "$(uname)" = "Linux" ] && has_systemd; then
   mkdir -p "$(dirname "$UNIT")"

@@ -1,0 +1,112 @@
+-- relay.syn — the meeting point between an Atril daemon and the phones paired with it, for when they
+-- cannot reach each other directly (a home router, mobile data). Both connect OUT to it; it joins them.
+--
+-- It is blind on purpose: what goes through is encrypted end to end between the phone and the daemon
+-- (keys pinned in the pairing QR, see remote.syn), so the relay cannot read a terminal nor type into
+-- one, and neither can whoever breaks into it. It keeps nothing: no file, no database, no outgoing
+-- connection (the `require` block below is all it can do).
+--
+--   GET /host/<room>     a daemon. One per room: a second one is refused while the first is connected.
+--                         The room is derived from the daemon's public key (unguessable, in the QR).
+--   GET /client/<room>   a phone. Each one is a stream of that room's daemon.
+--   GET /echo            up to 4 frames of 64 bytes, sent back: the round trip Atril shows before you choose
+--
+-- What the daemon sees (JSON text frames):   relay → daemon  {t: "open", s} · {s, d} · {t: "close", s}
+--                                            daemon → relay  {s, d} · {t: "close", s}
+-- What a phone sees: the `d` of its stream, frame by frame, as it was sent. `d` is the daemon's and the
+-- phone's business (base64 of ciphertext after the handshake).
+--
+--   bus  relay.<room>.up       a phone said something / opened / closed: the room's daemon forwards it
+--   bus  relay.<room>.<s>      the daemon said something to stream s
+--   state relay:<room>         a daemon holds the room
+--
+-- Your own (the engine: curl -fsSL https://synsema.com/install.sh | sh):
+--   a server with a domain, 80 and 443 free:
+--       synsema serve relay.syn --port 443 --bind 0.0.0.0 --domain relay.example.com --tls-auto you@example.com
+--   behind an edge or a tunnel that already has the domain (a Synsema tunnel: syn tunnel 8796):
+--       synsema serve relay.syn --bind 127.0.0.1
+-- Then in Atril: Agregar dispositivo → Teléfono → cambiar relay, or `atr relay use relay.example.com`.
+
+require serve(8796)
+require serve(443)    -- with --domain: HTTPS of its own
+require serve(80)     -- the ACME challenge of that certificate
+require time
+require random
+
+let MAX_FRAME be 1048576       -- a frame bigger than this closes the connection
+let IDLE be 75                 -- seconds without a word (pings keep a live socket talking)
+
+task room_ok(room)
+    give regex_find_all(text(room), "^[A-Za-z0-9_-]{16,64}$") != []
+
+serve on 8796
+    route "GET /"
+        give respond("Atril relay. Nothing to see here: everything that goes through is encrypted end to end.\n", "text/plain")
+
+    -- how long a message takes to come back: Atril measures it before you choose a relay (4 tiny frames)
+    route "GET /echo"
+        socket
+            let n be 0
+            while n < 4
+                let ev be select({"c": socket}, 10)
+                when ev == nothing or ev["type"] != "text" or length(ev["data"]) > 64
+                    set n to 4
+                otherwise
+                    ws_send(socket, ev["data"])
+                    set n to n + 1
+            ws_close(socket)
+
+    route "GET /host/:room"
+        socket
+            let room be params.room
+            when not room_ok(room) or state_get("relay:" + room, nothing) != nothing
+                ws_close(socket)
+                stop
+            let me be token(16)
+            state_set("relay:" + room, me)
+            let up be bus_subscribe("relay." + room + ".up")
+            let live be true
+            while live
+                let ev be select({"host": socket, "up": up}, IDLE)
+                when ev == nothing
+                    set live to false
+                otherwise when ev["name"] == "up"
+                    ws_send(socket, json_encode(ev["data"]))
+                otherwise when ev["type"] == "close"
+                    set live to false
+                otherwise when ev["type"] == "text" and length(ev["data"]) <= MAX_FRAME
+                    let m be json_decode(ev["data"], nothing)
+                    when m != nothing and contains(m, "s")
+                        bus_publish("relay." + room + "." + text(m["s"]), m)
+            -- the phones of this room lose their daemon: they reconnect when it is back
+            bus_publish("relay." + room + ".gone", {"t": "gone"})
+            when state_get("relay:" + room, nothing) == me
+                state_delete("relay:" + room)
+
+    route "GET /client/:room"
+        socket
+            let room be params.room
+            when not room_ok(room) or state_get("relay:" + room, nothing) == nothing
+                ws_close(socket)
+                stop
+            let s be token(16)
+            let down be bus_subscribe(["relay." + room + "." + s, "relay." + room + ".gone"])
+            bus_publish("relay." + room + ".up", {"t": "open", "s": s})
+            let live be true
+            while live
+                let ev be select({"phone": socket, "down": down}, IDLE)
+                when ev == nothing
+                    set live to false
+                otherwise when ev["name"] == "down"
+                    when contains(ev["data"], "d")
+                        ws_send(socket, ev["data"]["d"])
+                    otherwise
+                        set live to false
+                otherwise when ev["type"] == "close"
+                    set live to false
+                otherwise when ev["type"] == "text" and length(ev["data"]) <= MAX_FRAME
+                    bus_publish("relay." + room + ".up", {"s": s, "d": ev["data"]})
+                otherwise
+                    set live to false
+            bus_publish("relay." + room + ".up", {"t": "close", "s": s})
+            ws_close(socket)

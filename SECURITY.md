@@ -50,24 +50,53 @@ still listens on its own 127.0.0.1, and this computer reaches it through an SSH 
   key as before (127.0.0.1, the token in `~/.atril/daemon.json`). Disconnecting a machine forgets it
   here; to cut Atril out of it entirely, remove the `atril@…` line from its `authorized_keys`.
 
-## v0.3 — other machines without SSH (designed, not built)
+## Your phone, through a relay (built)
 
-For machines you cannot reach by SSH (a computer behind a home router, a phone). No machine ever
-opens a port. Each daemon keeps **one outbound** encrypted connection to a relay
-(the same design as `syn tunnel`), so a laptop behind NAT, a VPS and a phone meet without inbound
-firewall rules. Knowing an IP gives an attacker nothing to connect to.
+A phone on mobile data cannot reach a computer behind a home router, and the daemon still listens on
+127.0.0.1 only. So both connect **out** to a relay that joins them, and the relay is not trusted:
+everything between the phone and the daemon is encrypted end to end, with keys the relay never has.
+Where the relay runs (ours at `atril.synsema.io`, or yours) decides availability, not security.
 
-1. **Pairing.** A new device (phone, another laptop) is added by scanning a QR or typing a short code
-   shown by a machine you already control, and approving it there. Each device has its own key pair;
-   the private key never leaves it.
-2. **End-to-end encryption.** Terminal bytes are encrypted between the device and the daemon with
-   keys the relay never sees (Noise / X25519 + ChaCha20-Poly1305). The relay routes ciphertext: it
-   cannot read your sessions nor type into them, and neither can anyone who breaks into it.
-3. **Pinned keys.** The device knows the daemon's public key and the daemon knows the device's. A
-   relay that swaps keys is detected and the connection refused.
-4. **Revocation.** Removing a device on any machine you control cuts it everywhere.
-5. **Read-only sharing.** A session can be shared to watch, without the right to type.
-6. **Audit.** Every attach, every device, every kill is logged on the machine that owns the session.
+| Threat | What stops it | Verified |
+|---|---|---|
+| The relay (or whoever breaks into it) reads a terminal or types into one | It only carries sealed records: AES-256-GCM with keys from a handshake it cannot complete (below) | a record with one byte changed does not open and ends the connection (`src/remote_test.syn`) |
+| A relay that answers in the daemon's place | The QR pins the daemon's public key; without its private half the keys do not match and the first record does not open | an impostor without the key cannot derive them (`remote_test.syn`) |
+| Someone who connects to the relay with the room of your daemon | The daemon talks only to a phone whose key it paired, or that brings a valid pairing code | an unpaired browser gets "not paired" and nothing else |
+| A stolen key, later, opens what was recorded before | Every connection adds two fresh ephemeral keys (forward secrecy) | — (by construction: DH(Ep, Ed) dies with the connection) |
+| A phone you lost | `atr devices rm <id>` on the computer: its connection is cut at once and it cannot come back | revoked in the end-to-end test: the next request fails, the phone stops retrying |
+| A paired phone pairs others, removes phones, stops the daemon, reads the sources | Those routes answer 403 to a phone; pairing is done only from the computer | 403 on `/api/remote/*`, `/api/shutdown`, `/api/source/*` from the phone |
+| The page the phone runs is changed on the way | The app is served from its own origin (`app.atril.synsema.io`, static files built from this repository by `src/app/build.sh`), never by the relay: breaking into the relay does not change the code that holds the keys | — |
+| Moving the phones to another relay | Only the computer chooses the relay (`/api/remote/relay` answers 403 to a phone); the phones connected at that moment learn the new address inside a sealed record, so a relay cannot send them elsewhere | moved to a local relay and back in the end-to-end test: the phone followed both times |
+
+**Pairing.** `atr pair` shows a QR with the relay, the room (derived from the daemon's public key),
+that key, a one-use code valid 5 minutes and the machine's name, all in the URL fragment (it never
+reaches a server). The phone makes its own X25519 key in the browser, **not exportable**, kept in that
+origin's storage. The daemon keeps the public half in `~/.atril/remote-devices.json`.
+
+**Handshake** (`src/remote.syn`, `src/app/remote.js`; like Noise KK). Each side brings an ephemeral key
+(Ep, Ed) and 16 random bytes; with h = SHA-256 of every public value:
+`ck1 = HKDF(DH(Ep, D), h)` (only the real daemon), `ck2 = HKDF(DH(P, Ed), ck1)` (only the paired phone),
+and one key per direction `HKDF(DH(Ep, Ed), ck2)`. Records carry a counter in the nonce: one out of
+order, repeated or changed ends the connection. The daemon speaks first, so the phone knows the keys
+match before it sends anything.
+
+**What the phone can do.** Whatever the window can, and nothing else: each request goes to this
+daemon's own API on 127.0.0.1 with its key, so every check of the window applies to the phone too.
+
+**The relay** (`src/relay.syn`) keeps nothing: no file, no database, no outgoing connection. Its
+`require` block is `serve`, `time`, `random`. Ours is `atril.synsema.io`; yours runs with one command
+(the header of `relay.syn`, or **Agregar dispositivo → Teléfono → cambiar** in the window, which tests
+it and shows how long a message takes to come back before you use it).
+
+Known gaps, in order:
+- A relay can refuse service (drop the frames); it cannot read or change them.
+- The relay accepts the first daemon that connects to a room. The room's name is only in the QR, and a
+  squatter would only block it (it cannot complete a handshake). A signature from the daemon is next.
+- The first load of the web app trusts the server of `app.atril.synsema.io` and its certificate. The
+  Android app (next) carries the same files inside, signed: no server is trusted for the code.
+- The daemon may open connections to any host (`require net("*")`), because the relay is yours to
+  choose. Only the Remote agent connects out, and only to the relay in `~/.atril/remote.json`.
+- Read-only sharing of one session and an audit log of phone actions are not built yet.
 
 The hosted relay at synsema.com will add teams, SSO and retention; the encryption above is in the
 free version too. Security is not what we charge for.

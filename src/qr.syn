@@ -1,0 +1,349 @@
+-- qr.syn — a QR code for a short text (the pairing link of `atr pair`), drawn in the terminal.
+-- Byte mode, error correction L, versions 1 to 10 (up to 271 bytes). Pure: no `require`.
+-- Follows ISO/IEC 18004 the way Nayuki's reference implementation lays it out: function patterns,
+-- Reed-Solomon over GF(256) (polynomial 0x11D), block interleaving, the zigzag placement, the eight
+-- masks (the one with the lowest penalty wins), format and version bits with their BCH codes.
+
+-- per version, level L: error-correction codewords per block, and the data codewords of each block
+let BLOCKS be [[7, [19]], [10, [34]], [15, [55]], [20, [80]], [26, [108]], [18, [68, 68]], [20, [78, 78]], [24, [97, 97]], [30, [116, 116]], [18, [68, 68, 69, 69]]]
+let ALIGN be [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]]
+
+-- ---- GF(256) and Reed-Solomon
+
+task gf_tables()
+    let ex be []
+    let lg be []
+    each i in range(256)
+        set lg to append(lg, 0)
+    let x be 1
+    each i in range(255)
+        set ex to append(ex, x)
+        set lg[x] to i
+        set x to shl(x, 1)
+        when x >= 256
+            set x to bit_xor(x, 285)
+    give {"exp": ex, "log": lg}
+
+let GF be gf_tables()
+
+task gf_mul(a, b)
+    when a == 0 or b == 0
+        give 0
+    give GF["exp"][(GF["log"][a] + GF["log"][b]) % 255]
+
+-- the generator polynomial of degree n, highest coefficient first (the leading 1 left out)
+task rs_generator(n)
+    let g be [1]
+    each i in range(n)
+        let next be []
+        each j in range(length(g) + 1)
+            let a be when j < length(g) then g[j] otherwise 0
+            let b be when j > 0 then gf_mul(g[j - 1], GF["exp"][i]) otherwise 0
+            set next to append(next, bit_xor(a, b))
+        set g to next
+    give slice(g, 1)
+
+task rs_remainder(data, n)
+    let gen be rs_generator(n)
+    let rem be []
+    each i in range(n)
+        set rem to append(rem, 0)
+    each d in data
+        let factor be bit_xor(d, rem[0])
+        set rem to append(slice(rem, 1), 0)
+        each i in range(n)
+            set rem[i] to bit_xor(rem[i], gf_mul(gen[i], factor))
+    give rem
+
+-- ---- the codewords
+
+task data_capacity(v)
+    give sum(BLOCKS[v - 1][1])
+
+task pick_version(n)
+    each v in range(1, 11)
+        let count_bits be when v <= 9 then 8 otherwise 16
+        when 4 + count_bits + 8 * n <= 8 * data_capacity(v)
+            give v
+    raise "the text is too long for a QR code here (" + text(n) + " bytes; up to 271)"
+
+task push_bits(bits, value, n)
+    let out be bits
+    let i be n - 1
+    while i >= 0
+        set out to append(out, bit_and(shr(value, i), 1))
+        set i to i - 1
+    give out
+
+task codewords(data, v)
+    let cap be data_capacity(v)
+    let bits be push_bits([], 4, 4)
+    set bits to push_bits(bits, length(data), when v <= 9 then 8 otherwise 16)
+    each b in data
+        set bits to push_bits(bits, b, 8)
+    set bits to push_bits(bits, 0, min(4, cap * 8 - length(bits)))
+    while length(bits) % 8 != 0
+        set bits to append(bits, 0)
+    let words be []
+    let i be 0
+    while i < length(bits)
+        let w be 0
+        each j in range(8)
+            set w to w * 2 + bits[i + j]
+        set words to append(words, w)
+        set i to i + 8
+    let pad be 236
+    while length(words) < cap
+        set words to append(words, pad)
+        set pad to when pad == 236 then 17 otherwise 236
+    -- split in blocks, error correction per block, then interleave
+    let ec be BLOCKS[v - 1][0]
+    let blocks be []
+    let ecs be []
+    let at be 0
+    each n in BLOCKS[v - 1][1]
+        let blk be slice(words, at, at + n)
+        set blocks to append(blocks, blk)
+        set ecs to append(ecs, rs_remainder(blk, ec))
+        set at to at + n
+    let out be []
+    each i in range(max(BLOCKS[v - 1][1]))
+        each blk in blocks
+            when i < length(blk)
+                set out to append(out, blk[i])
+    each i in range(ec)
+        each e in ecs
+            set out to append(out, e[i])
+    give out
+
+-- ---- the matrix: rows of 0/1, and which modules are function patterns
+
+task blank(size, value)
+    let rows be []
+    each r in range(size)
+        let row be []
+        each c in range(size)
+            set row to append(row, value)
+        set rows to append(rows, row)
+    give rows
+
+task finder(m, f, row, col)
+    let out be {"m": m, "f": f}
+    each dr in range(-1, 8)
+        each dc in range(-1, 8)
+            let r be row + dr
+            let c be col + dc
+            when r >= 0 and c >= 0 and r < length(m) and c < length(m)
+                let d be max(abs(dr - 3), abs(dc - 3))
+                set out["m"][r][c] to when d != 2 and d != 4 then 1 otherwise 0
+                set out["f"][r][c] to true
+    give out
+
+task bch_format(mask)
+    let data be bit_or(shl(1, 3), mask)
+    let rem be data
+    each i in range(10)
+        set rem to bit_xor(shl(rem, 1), shr(rem, 9) * 1335)
+    give bit_xor(bit_or(shl(data, 10), rem), 21522)
+
+task bch_version(v)
+    let rem be v
+    each i in range(12)
+        set rem to bit_xor(shl(rem, 1), shr(rem, 11) * 7973)
+    give bit_or(shl(v, 12), rem)
+
+task bit(x, i)
+    give bit_and(shr(x, i), 1)
+
+-- the format bits for one mask, in both copies
+task draw_format(m, mask)
+    let size be length(m)
+    let out be m
+    let b be bch_format(mask)
+    each i in range(6)
+        set out[i][8] to bit(b, i)
+    set out[7][8] to bit(b, 6)
+    set out[8][8] to bit(b, 7)
+    set out[8][7] to bit(b, 8)
+    each i in range(9, 15)
+        set out[8][14 - i] to bit(b, i)
+    each i in range(8)
+        set out[8][size - 1 - i] to bit(b, i)
+    each i in range(8, 15)
+        set out[size - 15 + i][8] to bit(b, i)
+    set out[size - 8][8] to 1
+    give out
+
+task function_patterns(v)
+    let size be 17 + 4 * v
+    let m be blank(size, 0)
+    let f be blank(size, false)
+    -- timing
+    each i in range(size)
+        set m[6][i] to when i % 2 == 0 then 1 otherwise 0
+        set f[6][i] to true
+        set m[i][6] to when i % 2 == 0 then 1 otherwise 0
+        set f[i][6] to true
+    -- finders and their separators
+    let mf be {"m": m, "f": f}
+    set mf to finder(mf["m"], mf["f"], 0, 0)
+    set mf to finder(mf["m"], mf["f"], 0, size - 7)
+    set mf to finder(mf["m"], mf["f"], size - 7, 0)
+    set m to mf["m"]
+    set f to mf["f"]
+    -- alignment
+    let al be ALIGN[v - 1]
+    let n be length(al)
+    each i in range(n)
+        each j in range(n)
+            let corner be (i == 0 and j == 0) or (i == 0 and j == n - 1) or (i == n - 1 and j == 0)
+            when not corner
+                each dr in range(-2, 3)
+                    each dc in range(-2, 3)
+                        set m[al[i] + dr][al[j] + dc] to when max(abs(dr), abs(dc)) != 1 then 1 otherwise 0
+                        set f[al[i] + dr][al[j] + dc] to true
+    -- format areas (drawn per mask later) and the dark module
+    each i in range(9)
+        set f[8][i] to true
+        set f[i][8] to true
+    each i in range(8)
+        set f[8][size - 1 - i] to true
+        set f[size - 1 - i][8] to true
+    -- version (7 and up)
+    when v >= 7
+        let vb be bch_version(v)
+        each i in range(18)
+            let a be size - 11 + i % 3
+            let b be i // 3
+            set m[b][a] to bit(vb, i)
+            set f[b][a] to true
+            set m[a][b] to bit(vb, i)
+            set f[a][b] to true
+    give {"m": m, "f": f}
+
+task place(m, f, words)
+    let size be length(m)
+    let out be m
+    let total be length(words) * 8
+    let i be 0
+    let right be size - 1
+    while right >= 1
+        when right == 6
+            set right to 5
+        each vert in range(size)
+            each j in range(2)
+                let x be right - j
+                let upward be bit_and(right + 1, 2) == 0
+                let y be when upward then size - 1 - vert otherwise vert
+                when not f[y][x] and i < total
+                    set out[y][x] to bit(words[i // 8], 7 - i % 8)
+                    set i to i + 1
+        set right to right - 2
+    give out
+
+task masked(r, c, k)
+    when k == 0
+        give (r + c) % 2 == 0
+    when k == 1
+        give r % 2 == 0
+    when k == 2
+        give c % 3 == 0
+    when k == 3
+        give (r + c) % 3 == 0
+    when k == 4
+        give (r // 2 + c // 3) % 2 == 0
+    when k == 5
+        give (r * c) % 2 + (r * c) % 3 == 0
+    when k == 6
+        give ((r * c) % 2 + (r * c) % 3) % 2 == 0
+    give ((r + c) % 2 + (r * c) % 3) % 2 == 0
+
+task apply_mask(m, f, k)
+    let out be m
+    each r in range(length(m))
+        each c in range(length(m))
+            when not f[r][c] and masked(r, c, k)
+                set out[r][c] to 1 - out[r][c]
+    give out
+
+-- how hard the code is to read: runs of five or more, 2x2 blocks, and the balance of dark modules
+-- (the finder-lookalike rule is left out: any mask still makes a valid code)
+task penalty(m)
+    let size be length(m)
+    let p be 0
+    let dark be 0
+    each r in range(size)
+        let run_r be 1
+        let run_c be 1
+        each c in range(size)
+            set dark to dark + m[r][c]
+            when c > 0
+                when m[r][c] == m[r][c - 1]
+                    set run_r to run_r + 1
+                    when run_r == 5
+                        set p to p + 3
+                    otherwise when run_r > 5
+                        set p to p + 1
+                otherwise
+                    set run_r to 1
+                when m[c][r] == m[c - 1][r]
+                    set run_c to run_c + 1
+                    when run_c == 5
+                        set p to p + 3
+                    otherwise when run_c > 5
+                        set p to p + 1
+                otherwise
+                    set run_c to 1
+            when r > 0 and c > 0
+                let s be m[r][c] + m[r - 1][c] + m[r][c - 1] + m[r - 1][c - 1]
+                when s == 0 or s == 4
+                    set p to p + 3
+    let k be (abs(dark * 20 - size * size * 10) + size * size - 1) // (size * size) - 1
+    give p + max(k, 0) * 10
+
+-- the code for a text: rows of 0/1 (1 = dark), without the quiet zone
+export task encode(t)
+    let data be []
+    each b in bytes(t)
+        set data to append(data, b)
+    let v be pick_version(length(data))
+    let base be function_patterns(v)
+    let filled be place(base["m"], base["f"], codewords(data, v))
+    let best be nothing
+    let best_p be 0
+    each k in range(8)
+        let cand be draw_format(apply_mask(filled, base["f"], k), k)
+        let p be penalty(cand)
+        when best == nothing or p < best_p
+            set best to cand
+            set best_p to p
+    give best
+
+-- the code for a terminal: two modules per character, dark on a light background, quiet zone of 4
+export task terminal(m)
+    let size be length(m)
+    let q be 4
+    let full be size + 2 * q
+    let lines be []
+    let r be -q
+    while r < size + q
+        let line be "\u001b[30;47m"
+        each c in range(-q, size + q)
+            let top be r >= 0 and r < size and c >= 0 and c < size and m[r][c] == 1
+            let low be r + 1 >= 0 and r + 1 < size and c >= 0 and c < size and m[r + 1][c] == 1
+            set line to line + (when top and low then "█" otherwise when top then "▀" otherwise when low then "▄" otherwise " ")
+        set lines to append(lines, line + "\u001b[0m")
+        set r to r + 2
+    give join(lines, "\n")
+
+-- the code as SVG (for tests and for a page)
+export task svg(m, scale)
+    let size be length(m)
+    let q be 4
+    let w be (size + 2 * q) * scale
+    let parts be ["<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + text(w) + "\" height=\"" + text(w) + "\" viewBox=\"0 0 " + text(w) + " " + text(w) + "\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/>"]
+    each r in range(size)
+        each c in range(size)
+            when m[r][c] == 1
+                set parts to append(parts, "<rect x=\"" + text((c + q) * scale) + "\" y=\"" + text((r + q) * scale) + "\" width=\"" + text(scale) + "\" height=\"" + text(scale) + "\"/>")
+    give join(parts, "") + "</svg>"

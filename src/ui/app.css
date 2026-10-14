@@ -350,3 +350,51 @@ b.ok { color: var(--ok); }
 #star .never { margin-left: auto; color: var(--muted); font-size: 11px; text-decoration: underline; white-space: nowrap; }
 #star .sx { position: absolute; top: 6px; right: 10px; color: var(--muted); }
 #star .ok { color: var(--ok); }
+
+/* add a device: a phone (QR) or a machine (SSH) */
+#conn .wide { max-height: 86vh; overflow-y: auto; }
+.ctabs { display: flex; gap: 4px; padding: 10px 14px 4px; }
+.ctabs button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; color: var(--soft); }
+.ctabs button.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.pv { padding: 8px 14px 6px; }
+.pv h3 { margin: 6px 0 8px; font-size: 15px; color: var(--text); }
+#cphone p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
+#cphone .muted { color: var(--soft); opacity: .8; }
+.card { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.45; }
+.card:hover:not(:disabled) { border-color: var(--accent); }
+.card:disabled { opacity: .45; cursor: not-allowed; }
+.card b { font-size: 14px; }
+.card .why { color: var(--soft); font-size: 12px; }
+.pv .back.mini { margin-top: 2px; }
+#worklog { margin: 0 0 10px; font-size: 13px; }
+#worklog li { padding: 2px 0; color: var(--soft); }
+#worklog li::before { content: "✓ "; color: var(--ok); }
+#cphone .row-btns { display: flex; gap: 8px; justify-content: flex-end; }
+#cphone .row-btns button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); }
+#cphone .row-btns .primary { background: var(--accent); color: var(--on-accent); font-weight: 700; border-color: var(--accent); }
+.rurl { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.rurl input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font: inherit; outline: none; }
+.rurl input:focus { border-color: var(--accent); }
+.qrrow { display: flex; gap: 16px; align-items: flex-start; }
+#qrbox { flex: none; width: 196px; height: 196px; border-radius: 6px; overflow: hidden; background: var(--bg); }
+#qrbox svg { width: 100%; height: 100%; display: block; }
+#qrbox.used svg { opacity: .12; filter: blur(2px); }
+.qrside { flex: 1; min-width: 0; }
+#cphone .ok { color: var(--ok); }
+#cphone .warn { color: var(--warn); opacity: 1; }
+#relayline { margin-top: 10px !important; }
+.clabel { padding: 8px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+#phones { padding: 0 0 6px; font-size: 13px; }
+#phones li { padding: 4px 0; display: flex; align-items: baseline; gap: 6px; color: var(--text); }
+#phones li .muted { flex: 1; }
+.mini.danger { color: var(--warn); }
+#cphone .pfoot #phint { flex: 1; font-size: 12px; }
+#cphone .loading { color: var(--soft); display: flex; align-items: center; gap: 10px; }
+#cphone .loading::before { content: ""; flex: none; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+#worklogin { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 6px; }
+#logincode { font: 700 22px/1.2 var(--mono); letter-spacing: .12em; color: var(--text); margin: 6px 0 !important; }
+#loginurl { color: var(--accent); word-break: break-all; }
+@media (max-width: 520px) { .qrrow { flex-direction: column; align-items: center; } }
+
+/* on a phone: pairing and connecting machines are done from the computer */
+.atril-phone #adddev { display: none; }

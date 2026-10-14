@@ -20,7 +20,7 @@
 
     <div class="label">dispositivos</div>
     <ul id="devices"></ul>
-    <button id="adddev" class="addrow" title="Un servidor u otra computadora, por SSH">+ Agregar dispositivo</button>
+    <button id="adddev" class="addrow" title="Tu teléfono (con un código QR), o un servidor u otra computadora por SSH">+ Agregar dispositivo</button>
 
     <div class="label split"><span>spaces <span id="spwhere" class="muted"></span></span><button id="new" class="mini" title="Abrir una carpeta de trabajo en este dispositivo">+ nuevo</button></div>
     <ul id="spaces"></ul>
@@ -99,6 +99,58 @@
 
 <div id="conn" hidden>
   <div class="box wide">
+    <div class="ctabs"><button data-tab="phone">Teléfono</button><button data-tab="ssh">Servidor o computadora</button></div>
+
+    <div id="cphone">
+      <div id="pv-places" class="pv" hidden>
+        <h3>¿En qué dispositivo corre el relay?</h3>
+        <p class="muted">Es donde se encuentran tu teléfono y esta computadora. Solo pasa datos cifrados: no puede leerlos. Tiene que quedar prendido: si se apaga, el teléfono no llega.</p>
+        <div id="places"></div>
+      </div>
+      <div id="pv-how" class="pv" hidden>
+        <h3 id="howtitle"></h3>
+        <div id="hows"></div>
+        <button class="back mini">← otro dispositivo</button>
+      </div>
+      <div id="pv-domain" class="pv" hidden>
+        <h3>¿Qué dominio?</h3>
+        <label class="rurl"><input id="pdomain" placeholder="relay.tudominio.com" autocomplete="off" spellcheck="false"></label>
+        <p id="pdomainhint" class="muted"></p>
+        <div class="row-btns"><button class="back">Volver</button><button id="pdomaingo" class="primary">Continuar</button></div>
+      </div>
+      <div id="pv-work" class="pv" hidden>
+        <h3 id="worktitle"></h3>
+        <ul id="worklog"></ul>
+        <p id="workspin" class="loading">Trabajando…</p>
+        <div id="worklogin" hidden>
+          <p><b>Aprobá este equipo en tu cuenta de Synsema.</b> Abrí la página y confirmá que muestra este código:</p>
+          <p id="logincode"></p>
+          <p class="muted"><a id="loginurl" target="_blank" rel="noopener"></a></p>
+          <div class="row-btns"><button id="loginopen" class="primary">Abrir la página</button></div>
+        </div>
+        <p id="workerr" class="warn" hidden></p>
+        <div id="workbtns" class="row-btns" hidden><button class="back">Volver</button><button id="workretry" class="primary">Reintentar</button></div>
+      </div>
+      <div id="pv-qr" class="pv" hidden>
+        <div class="qrrow">
+          <div id="qrbox"></div>
+          <div class="qrside">
+            <p><b>Escaneá este código con la cámara del teléfono.</b></p>
+            <p class="muted">Abre esta ventana en el teléfono, cifrada de punta a punta con esta computadora.</p>
+            <p id="qripnote" class="warn" hidden>Por IP, este código se abre con la app de Android. Desde el navegador del teléfono hace falta dominio o túnel («cambiar»).</p>
+            <p id="qrexp" class="muted"></p>
+            <p id="qrmsg"></p>
+            <button id="qrnew" class="mini">Generar otro código</button>
+          </div>
+        </div>
+        <p id="relayline"><span id="relaynow"></span> <button id="relaychg" class="mini">cambiar</button> <button id="relayoff" class="mini danger">quitar relay</button></p>
+        <div class="clabel">teléfonos emparejados</div>
+        <ul id="phones"></ul>
+      </div>
+      <div class="pfoot"><span class="muted" id="phint">Un teléfono no puede emparejar otros ni cambiar el relay: eso se hace desde acá.</span><button id="pclose">Cerrar</button></div>
+    </div>
+
+    <div id="cssh">
     <div class="ph">Conectar máquina <span class="muted">· un servidor o una computadora con SSH</span></div>
     <div class="cform">
       <label>Usuario y dirección<input id="ctarget" placeholder="root@203.0.113.7" autocomplete="off" spellcheck="false"></label>
@@ -109,6 +161,7 @@
     <div id="cinstall" hidden><p id="cinstallmsg"></p><div class="row-btns"><button id="cno">No</button><button id="cyes" class="primary">Instalar Atril ahí</button></div></div>
     <form id="cpass" hidden><label id="cpasslabel">Contraseña</label><input id="cpw" type="password" autocomplete="off"><button class="primary">Enviar</button></form>
     <div class="pfoot"><span id="cmsg" class="muted">La contraseña se usa una sola vez para dejar la llave de Atril. No se guarda.</span><button id="ccancel">Cerrar</button><button id="cgo" class="primary">Conectar</button></div>
+    </div>
   </div>
 </div>
 

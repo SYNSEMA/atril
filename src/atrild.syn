@@ -34,8 +34,16 @@ require env("HOME")
 require file.write("~/.atril/*")
 require file.read          -- a space's .git/HEAD, wherever the project lives (its shells can read it anyway)
 require net("127.0.0.1")     -- this daemon, and the tunnels to the other machines
+require net("*")   -- the relay the phones reach this daemon through: ours (atril.synsema.io) or the one you
+                   -- choose, anywhere; what goes through it is sealed end to end (remote.syn)
+require reveal("ecdh_keypair.private")   -- once: this daemon's key for the phones, written to ~/.atril/remote.json
+require env("ATRIL_RELAY")   -- another relay (tests, your own)
+require env("ATRIL_APP")     -- where the phone's app is served (tests)
+require env("LOCALAPPDATA")   -- where Atril is installed on Windows: its engine runs a relay on this computer
 
 use "./window.syn" as window
+use "./remote.syn" as remote
+use "./qr.syn" as qr
 
 let PORT be 7171
 let VERSION be "0.3.4"
@@ -725,6 +733,8 @@ task answers(port, key)
 
 task set_link(mid, status, err, remote_machine)
     let prev be state_get("link:" + mid, {})
+    when status == "down" and get(prev, "status") == "up"
+        state_set("linkdrops:" + mid, append(state_get("linkdrops:" + mid, []), now()))
     let rm be when remote_machine != nothing then remote_machine otherwise get(prev, "machine")
     state_set("link:" + mid, {"status": status, "error": err, "machine": rm, "since": now(), "version": get(prev, "version")})
     bus_publish("machines", {"id": mid})
@@ -900,7 +910,7 @@ task password_once(sock, m, pub)
 -- here, and its curl fetches each file with a key made for this one install. The engine comes from
 -- its official installer when the machine has none. Then the machine runs install.sh, as a person would.
 
-let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/files.js", "ui/star.js", "ui/theme.js", "ui/app.css",
+let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "remote.syn", "qr.syn", "relay.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/files.js", "ui/star.js", "ui/theme.js", "ui/app.css",
     "ui/themes/oscuro.json", "ui/themes/claro.json", "ui/themes/papel.json", "ui/themes/contraste.json", "ui/icon.svg",
     "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js", "ui/vendor/highlight.min.js"]
 
@@ -1046,6 +1056,772 @@ task proxy_http(mid, method, rest, q, body)
     otherwise
         set res to http_delete(url, h, 30)
     give respond(body of res, "application/json", status of res)
+
+-- ---- phones, through a relay (remote.syn has the cryptography and the protocol)
+--
+-- A paired phone reaches this daemon through a relay that both connect OUT to: no port opens here.
+-- The Remote agent holds that connection while there is at least one paired phone (or a pairing code
+-- waiting); each phone is a stream. After the handshake a phone asks, in sealed records, for what the
+-- window asks: an HTTP request ({id, t: "req", m, p, b}) or a socket ({id, t: "ws", p}). Each one runs
+-- as an agent that talks to this daemon's own API on 127.0.0.1 with its key, so every check the window
+-- goes through applies to the phone too; the answer comes back on the bus and the Remote agent seals it.
+--
+--   ~/.atril/remote.json          {public, private, relay}: this daemon's key (private: base64url, 0600)
+--   ~/.atril/remote-devices.json  [{id, public, name, created, last}] the paired phones
+--   state remote:pair:<code>      {expires} a pairing code (one use, 5 minutes)
+--   state remote:link             {status, error, since} the connection to the relay
+--   bus  remote.out               {s, msg} a request's answer, for the phone of stream s
+--   bus  rsock.<s>.<id>           {t: "m", d} | {t: "c"} what the phone says to one of its sockets
+--   bus  remote.ctl               {t: "stop"} | {t: "revoke", id} | {t: "relay", relay} (tell the phones, move)
+
+let REMOTE_FILE be "~/.atril/remote.json"
+let DEVICES_FILE be "~/.atril/remote-devices.json"
+let RELAY_DEFAULT be "wss://atril.synsema.io"
+let APP_URL be "https://app.atril.synsema.io"
+let PAIR_TTL be 300
+
+-- this daemon's key, made the first time (the private half is revealed once, to be written here)
+task remote_conf()
+    when not file_exists(REMOTE_FILE)
+        let kp be ecdh_keypair("X25519")
+        write_file(REMOTE_FILE, json_encode({"public": remote.b64(kp["public"]), "private": remote.b64(reveal(kp["private"])), "relay": RELAY_DEFAULT}))
+        when platform()["os"] != "windows"
+            run("chmod", ["600", replace(HOME, "\\", "/") + "/.atril/remote.json"])
+    let c be json_decode(read_file(REMOTE_FILE))
+    -- "" (or null): no relay, removed on purpose; ATRIL_RELAY wins over the file
+    let stored be get(c, "relay", RELAY_DEFAULT)
+    let forced be env("ATRIL_RELAY", "")
+    let relay be when forced != "" then forced otherwise when stored == nothing or text(stored) == "" then nothing otherwise stored
+    give {"public": remote.unb64(c["public"]), "relay": relay}
+
+-- the private half, as a secret: only the Remote agent loads it (a secret does not cross into an agent)
+task remote_private()
+    give as_secret(remote.unb64(json_decode(read_file(REMOTE_FILE))["private"]), "atril_remote_key")
+
+task load_devices()
+    try
+        give json_decode(read_file(DEVICES_FILE))
+    recover e
+        give []
+
+task save_devices(list)
+    write_file(DEVICES_FILE, json_encode(list))
+
+task device_by_public(pub)
+    each d in load_devices()
+        when d["public"] == pub
+            give d
+    give nothing
+
+-- a pairing code: what goes in the QR with the relay, the room and this daemon's public key
+task new_pairing()
+    let c be remote_conf()
+    when c["relay"] == nothing
+        give nothing
+    let code be token(16)
+    state_set("remote:pair:" + code, {"expires": now() + PAIR_TTL})
+    when state_get("remote:link", nothing) == nothing
+        spawn Remote
+    give {"code": code, "expires_in": PAIR_TTL, "relay": c["relay"], "room": remote.room_of(c["public"]), "key": remote.b64(c["public"]), "machine": MACHINE}
+
+-- a code is good once
+task take_pairing(code)
+    when code == nothing or text(code) == ""
+        give false
+    let p be state_get("remote:pair:" + text(code), nothing)
+    state_delete("remote:pair:" + text(code))
+    give p != nothing and p["expires"] > now()
+
+task pairing_waiting()
+    each k in keys(state_all())
+        when starts_with(k, "remote:pair:") and state_get(k)["expires"] > now()
+            give true
+    give false
+
+-- a relay as you write it (atril.example.com, https://…, wss://…) → its wss:// address, or nothing;
+-- ws:// only to this machine (a relay you try here)
+task relay_address(u)
+    let a be trim(text(u))
+    when a == ""
+        give nothing
+    when starts_with(a, "https://")
+        set a to "wss://" + slice(a, 8)
+    otherwise when starts_with(a, "http://")
+        set a to "ws://" + slice(a, 7)
+    otherwise when not starts_with(a, "wss://") and not starts_with(a, "ws://")
+        set a to "wss://" + a
+    while ends_with(a, "/")
+        set a to slice(a, 0, length(a) - 1)
+    let host be split(split(slice(a, when starts_with(a, "wss://") then 6 otherwise 5), "/")[0], ":")[0]
+    when host == "" or contains(a, " ") or contains(a, "?") or contains(a, "#") or contains(slice(a, 6), "/")
+        give nothing
+    when starts_with(a, "ws://") and host != "127.0.0.1" and host != "localhost"
+        give nothing
+    give a
+
+-- is it a relay of Atril, and how long it takes to answer from this computer (measured, not promised)
+task relay_probe(a)
+    let u be when starts_with(a, "wss://") then "https://" + slice(a, 6) otherwise "http://" + slice(a, 5)
+    try
+        let r be http_get(u + "/", {}, nothing, 8)
+        when status of r != 200 or not contains(text(body of r), "Atril relay")
+            give {"ok": false, "ms": nothing, "error": "responde, pero no es un relay de Atril"}
+    recover e
+        give {"ok": false, "ms": nothing, "error": text(e)}
+    -- the round trip of one message on an open socket: what a key typed on the phone pays, each way
+    -- through here (the connection itself, DNS and TLS are paid once and not counted)
+    let ms be nothing
+    try
+        let c be ws_connect(a + "/echo", {}, {"timeout": 8})
+        ws_send(c, "warm")
+        ws_recv(c, 8)
+        let best be 99999
+        each i in range(3)
+            let t0 be now()
+            ws_send(c, "ping")
+            when ws_recv(c, 8) != nothing
+                set best to min(best, (now() - t0) * 1000)
+        ws_close(c)
+        when best < 99999
+            set ms to round(best)
+    recover e
+        set ms to nothing
+    give {"ok": true, "ms": ms, "error": nothing}
+
+task relay_info()
+    let c be remote_conf()
+    give {"relay": c["relay"], "default": RELAY_DEFAULT, "env": env("ATRIL_RELAY", "") != "", "probe": (when c["relay"] == nothing then {"ok": false, "ms": nothing, "error": "sin relay"} otherwise relay_probe(c["relay"])), "setup": setup_of()}
+
+-- another relay: the phones connected now learn it (sealed) and come along; the link moves to it
+task set_relay(a)
+    remote_conf()
+    let c be json_decode(read_file(REMOTE_FILE))
+    set c["relay"] to a
+    write_file(REMOTE_FILE, json_encode(c))
+    bus_publish("remote.ctl", {"t": "relay", "relay": a})
+
+-- ---- where the relay runs: chosen in the window (Agregar dispositivo → Teléfono), set up by Atril
+--
+-- The window offers the devices it knows: this computer and every machine connected through SSH, each
+-- with what was measured (how long it has been on, how its link has been), never a promise. Our relay
+-- (atril.synsema.io) is offered only while there is nothing else to run one on. Atril then does the
+-- work: copies relay.syn, keeps it running (a systemd user unit on a server; this daemon on this
+-- computer), opens the tunnel or the domain, and tests it from here before using it.
+--
+--   ~/.atril/remote.json  {…, setup: {place, name, mode, domain}}   mode: ip | domain | tunnel | synsema
+--   ~/.atril/relay/       relay.syn when it runs on this computer
+--   state linkdrops:<id>  when the link of a machine dropped (since this daemon started)
+
+let RELAY_PORT be 8796
+let RELAY_DIR be "~/.atril/relay"
+
+task relay_source()
+    give read_file("relay.syn")
+
+task setup_of()
+    remote_conf()
+    give get(json_decode(read_file(REMOTE_FILE)), "setup")
+
+task save_setup(setup, relay)
+    remote_conf()
+    let c be json_decode(read_file(REMOTE_FILE))
+    set c["setup"] to setup
+    write_file(REMOTE_FILE, json_encode(c))
+    set_relay(relay)
+
+-- seconds this computer has been on, or nothing
+task uptime_here()
+    try
+        let os be platform()["os"]
+        when os == "windows"
+            let r be run_quiet("powershell", ["-NoProfile", "-Command", "[int]((Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds"], 20)
+            give int(trim(r["out"]), fallback = nothing)
+        when os == "linux"
+            give int(split(read_file("/proc/uptime"), ".")[0], fallback = nothing)
+        let r be run_quiet("sysctl", ["-n", "kern.boottime"], 10)
+        let sec be regex_capture(r["out"], "sec = ([0-9]+)")
+        give when sec == nothing then nothing otherwise round(now() - int(sec[0]))
+    recover e
+        give nothing
+
+-- seconds a connected machine has been on, through its link (nothing when it does not answer)
+task uptime_of(m)
+    try
+        let r be run_quiet(ssh_tool("ssh"), ssh_opts(m) + [m["target"], "echo ATRIL-UP $(cut -d. -f1 /proc/uptime 2>/dev/null)"], 15)
+        let up be regex_capture(r["out"], "ATRIL-UP ([0-9]+)")
+        give when up == nothing then nothing otherwise int(up[0])
+    recover e
+        give nothing
+
+task host_of(m)
+    let parts be split(m["target"], "@")
+    give parts[length(parts) - 1]
+
+-- the devices the relay can run on, with what was measured on each
+task relay_places()
+    let out be [{"id": "local", "name": MACHINE, "this": true, "os": platform()["os"], "up": uptime_here()}]
+    each m in load_machines()
+        let l be state_get("link:" + m["id"], {})
+        let st be get(l, "status", "connecting")
+        set out to out + [{"id": m["id"], "name": m["name"], "this": false, "host": host_of(m),
+            "up": (when st == "up" then uptime_of(m) otherwise nothing), "link": st, "since": get(l, "since"),
+            "drops": length(state_get("linkdrops:" + m["id"], []))}]
+    give {"places": out, "synsema": length(load_machines()) == 0, "setup": setup_of()}
+
+-- what an ssh script prints as ATRIL-STEP goes to the window as it happens; gives the whole output
+task ssh_steps(sock, m, script, timeout)
+    let p be proc_spawn(ssh_tool("ssh"), ssh_opts(m) + [m["target"], script], {"pty": true, "cols": 400, "rows": 50})
+    let out be ""
+    let told be 0
+    let sent be false
+    let code be nothing
+    let deadline be now() + timeout
+    while code == nothing and now() < deadline
+        let ev be proc_recv(p, 2)
+        when ev != nothing
+            when ev["type"] == "exit"
+                set code to ev["data"]["exit_code"]
+            otherwise
+                set out to out + strip_ansi(ev["data"])
+                let steps be regex_find_all(out, "ATRIL-STEP [^\r\n]*")
+                while told < length(steps)
+                    tell(sock, replace(steps[told], "ATRIL-STEP ", ""))
+                    set told to told + 1
+                set sent to login_watch(sock, out, sent)
+    proc_close(p)
+    give out
+
+-- the Synsema CLI (syn) on this computer: on Windows it is syn.cmd, a launcher that a process cannot start
+-- by itself, so it goes through cmd.exe
+task syn_cmd()
+    when platform()["os"] == "windows"
+        give ["cmd.exe", "/c", "syn"]
+    let mine be replace(HOME, "\\", "/") + "/.local/bin/syn"
+    give [when file_info(mine)["exists"] then mine otherwise "syn"]
+
+task syn_whoami()
+    try
+        let sc be syn_cmd()
+        give run_quiet(sc[0], slice(sc, 1) + ["whoami"], 30)["out"]
+    recover e
+        give ""
+
+-- `syn login` prints a page and a code that a person approves in the browser: the window shows both
+-- (with a button that opens the page) while this waits. Gives true once it is signed in
+task login_watch(sock, out, sent)
+    when sent
+        give true
+    let url be regex_capture(out, "(https://[^\\s]+)")
+    let code be regex_capture(out, "\\n\\s*code +([A-Za-z0-9-]+)")
+    when url != nothing and code != nothing
+        ws_send(sock, json_encode({"t": "login", "url": url[0], "code": code[0]}))
+        give true
+    give false
+
+-- syn here, installed when missing, signed in when it is not. Gives nothing when ready, else what failed
+task syn_ready_here(sock)
+    let who be syn_whoami()
+    when not contains(who, "site")
+        tell(sock, "Instalando la CLI de Synsema (syn) en esta computadora")
+        when platform()["os"] == "windows"
+            run_quiet("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://synsema.com/cli/install.ps1 | iex"], 600)
+        otherwise
+            run_quiet("sh", ["-c", "curl -fsSL https://synsema.com/cli/install.sh | sh"], 600)
+        set who to syn_whoami()
+        when not contains(who, "site")
+            give "No pude instalar la CLI de Synsema. Instalala en una terminal con " + (when platform()["os"] == "windows" then "«irm https://synsema.com/cli/install.ps1 | iex»" otherwise "«curl -fsSL https://synsema.com/cli/install.sh | sh»") + " y Reintentar."
+    when regex_find_all(who, "(^|\\n)token ")
+        give nothing
+    tell(sock, "Falta iniciar sesión de Synsema en esta computadora")
+    let sc be syn_cmd()
+    let p be proc_spawn(sc[0], slice(sc, 1) + ["login", "--name", lower(MACHINE)], {"pty": true, "cols": 400, "rows": 50})
+    let out be ""
+    let sent be false
+    let code be nothing
+    let deadline be now() + 330
+    while code == nothing and now() < deadline
+        let ev be proc_recv(p, 2)
+        when ev != nothing
+            when ev["type"] == "exit"
+                set code to ev["data"]["exit_code"]
+            otherwise
+                set out to out + strip_ansi(ev["data"])
+                set sent to login_watch(sock, out, sent)
+    proc_close(p)
+    when not contains(out, "logged in to")
+        give "Nadie aprobó el código de Synsema a tiempo. Reintentar da uno nuevo."
+    tell(sock, "Sesión de Synsema iniciada")
+    give nothing
+
+-- the relay as a systemd user unit on a server (or in the background without systemd); $ARGS decided before
+task server_script(mode, domain)
+    let b be decode(bytes(relay_source()), "base64")
+    -- 1. what it needs, checked before anything changes: a failed try leaves the relay that works
+    let checks be join([
+        "export PATH=\"$HOME/.local/bin:$PATH\"; ",
+        "command -v synsema >/dev/null 2>&1 || { echo 'ATRIL-FAIL Ese servidor no tiene el motor de Synsema: actualizá Atril ahí (clic derecho en su pestaña).'; exit 3; }; ",
+        "D=\"$HOME/.atril/relay\"; UNIT=\"$HOME/.config/systemd/user/atril-relay.service\"; ",
+        "LISTEN=$( (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk '{print $4}'); ",
+        "busy() { echo \"$LISTEN\" | grep -q \":$1\\$\"; }; ",
+        "DIRECT=0; "], "")
+    when mode == "tunnel"
+        set checks to checks + join([
+            "if ! command -v syn >/dev/null 2>&1; then echo 'ATRIL-STEP Instalando la CLI de Synsema (syn) en ese servidor'; curl -fsSL https://synsema.com/cli/install.sh | sh >/dev/null 2>&1 || true; fi; ",
+            "command -v syn >/dev/null 2>&1 || { echo 'ATRIL-FAIL No pude instalar la CLI de Synsema en ese servidor. Instalala ahí con: curl -fsSL https://synsema.com/cli/install.sh | sh'; exit 5; }; ",
+            "signed() { (cd / && syn whoami 2>/dev/null) | grep -q '^token '; }; ",
+            "if ! signed; then echo 'ATRIL-STEP Falta iniciar sesión de Synsema en ese servidor'; (cd / && syn login --name \"$(hostname)\") || true; ",
+            "  signed || { echo 'ATRIL-FAIL Nadie aprobó el código de Synsema a tiempo. Reintentar da uno nuevo.'; exit 6; }; echo 'ATRIL-STEP Sesión de Synsema iniciada'; fi; "], "")
+    when mode == "domain"
+        set checks to checks + join([
+            "if busy 443; then ",
+            "  [ -d /opt/edge/sites.d ] && [ -w /opt/edge/sites.d ] || { echo 'ATRIL-FAIL En ese servidor ya hay algo atendiendo el 443 (nginx, Caddy, otro edge). Publicá " + domain + " con eso hacia el relay, o elegí túnel.'; exit 4; }; ",
+            "else ",
+            "  [ \"$(id -u)\" = 0 ] || { echo 'ATRIL-FAIL Para atender el 443 con su propio certificado, el relay tiene que correr como root (conectá ese servidor como root@…), o elegí túnel.'; exit 4; }; ",
+            "  DIRECT=1; ",
+            "fi; "], "")
+    -- 2. the relay: the one already running is kept (a new way to reach it does not restart it)
+    let relay be join([
+        "mkdir -p \"$D\"; printf %s '" + b + "' | base64 -d > \"$D/relay.syn\"; ",
+        "OLD=$(cat \"$D/port\" 2>/dev/null); ",
+        "if [ $DIRECT = 0 ] && [ -n \"$OLD\" ] && [ \"$OLD\" != 443 ] && curl -fsS -m 3 \"http://127.0.0.1:$OLD/\" 2>/dev/null | grep -q 'Atril relay'; then ",
+        "  P=$OLD; echo \"ATRIL-STEP El relay ya corre ahí (puerto $P)\"; ",
+        "else ",
+        "  if [ $DIRECT = 1 ]; then P=443; ARGS=\"--bind 0.0.0.0 --port 443 --domain " + domain + " --tls-auto atril@" + domain + "\"; ",
+        "  else P=" + text(RELAY_PORT) + "; while busy $P; do P=$((P+1)); done; ARGS=\"--bind 0.0.0.0 --port $P\"; fi; ",
+        "  echo 'ATRIL-STEP Dejando el relay corriendo'; ENG=$(command -v synsema); ",
+        "  if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then ",
+        "    mkdir -p \"$(dirname \"$UNIT\")\"; ",
+        "    printf '[Unit]\\nDescription=Atril relay: joins your Atril and your phones, sees only ciphertext\\n\\n[Service]\\nExecStart=%s serve relay.syn %s\\nWorkingDirectory=%s\\nRestart=always\\nRestartSec=3\\n\\n[Install]\\nWantedBy=default.target\\n' \"$ENG\" \"$ARGS\" \"$D\" > \"$UNIT\"; ",
+        "    systemctl --user daemon-reload; systemctl --user enable atril-relay >/dev/null 2>&1; systemctl --user restart atril-relay; ",
+        "    loginctl enable-linger \"$(id -un)\" 2>/dev/null || true; ",
+        "  else [ -n \"$OLD\" ] && pkill -f \"serve relay.syn --bind 0.0.0.0 --port $OLD\" >/dev/null 2>&1 || true; (cd \"$D\" && nohup \"$ENG\" serve relay.syn $ARGS > \"$D/relay.log\" 2>&1 &); fi; ",
+        "  echo $P > \"$D/port\"; sleep 2; ",
+        "fi; "], "")
+    -- 3. the way the phones reach it
+    let reach be ""
+    when mode == "ip"
+        set reach to "if command -v ufw >/dev/null 2>&1 && [ \"$(id -u)\" = 0 ] && ufw status 2>/dev/null | grep -q 'Status: active'; then ufw allow $P/tcp >/dev/null && echo \"ATRIL-STEP Abrí el puerto $P en el firewall\"; fi; ADDR=\"ws://HOST:$P\"; "
+    otherwise when mode == "domain"
+        set reach to "if [ $DIRECT = 0 ]; then printf '{\"host\": \"" + domain + "\", \"to\": \"http://127.0.0.1:%s\"}\\n' $P > /opt/edge/sites.d/" + domain + ".json; echo 'ATRIL-STEP Ese servidor ya tiene un edge en el 443: le agregué " + domain + "'; fi; ADDR=\"wss://" + domain + "\"; "
+    otherwise
+        set reach to "echo 'ATRIL-STEP Abriendo el túnel'; T=$(syn tunnel $P --name atril-relay --service --json 2>&1); ADDR=$(echo \"$T\" | grep -o 'https://[A-Za-z0-9.-]*' | head -1 | sed 's#^https://#wss://#'); [ -n \"$ADDR\" ] || { echo \"ATRIL-FAIL El túnel no se abrió: $T\"; exit 7; }; "
+    give checks + relay + reach + "echo \"ATRIL-ADDR $ADDR\""
+
+-- the relay on this computer: relay.syn next to this daemon's files, run by the engine Atril carries
+task engine_cmd()
+    try
+        let r be run_quiet("synsema", ["--version"], 10)
+        when contains(r["out"], "Synsema")
+            give ["synsema"]
+    recover e
+        let none be nothing
+    let os be platform()["os"]
+    when os == "windows"
+        give [env("LOCALAPPDATA", replace(HOME, "\\", "/") + "/AppData/Local") + "\\Atril\\atrild.exe", "--engine"]
+    give [replace(HOME, "\\", "/") + "/.local/bin/atrild", "--engine"]
+
+agent RelayHere
+    require exec
+    require time
+    require file.read
+    require env("LOCALAPPDATA")
+    require env("USERPROFILE")
+    require env("HOME")
+    let ctl be bus_subscribe("relayhere.ctl")
+    let alive be true
+    while alive
+        let cmd be engine_cmd()
+        let p be nothing
+        try
+            set p to proc_spawn(cmd[0], slice(cmd, 1) + ["serve", "relay.syn"] + rargs, {"cwd": replace(HOME, "\\", "/") + "/.atril/relay", "pty": true, "cols": 200, "rows": 20})
+        recover e
+            set p to nothing
+        let running be p != nothing
+        while running
+            let ev be select({"p": p, "ctl": ctl}, 30)
+            when ev != nothing and ev["name"] == "ctl"
+                proc_kill(p)
+                set running to false
+                set alive to false
+            otherwise when ev != nothing and ev["type"] == "exit"
+                set running to false
+        when alive
+            let ev be bus_recv(ctl, 5)
+            when ev != nothing
+                set alive to false
+
+task relay_here(rargs)
+    write_file(RELAY_DIR + "/relay.syn", relay_source())
+    bus_publish("relayhere.ctl", {"t": "stop"})
+    spawn RelayHere with rargs = rargs
+
+task start_relay_here()
+    let s be setup_of()
+    when s != nothing and s["place"] == "local" and s["mode"] != "synsema"
+        relay_here(get(s, "args", []))
+
+-- ---- taking a relay down: what Atril set up, and nothing else (another relay on that server stays)
+
+-- on a server: the tunnel, the domain in the edge, and (unless keep) the relay itself
+task teardown_script(s, keep)
+    let out be "export PATH=\"$HOME/.local/bin:$PATH\"; D=\"$HOME/.atril/relay\"; "
+    when s["mode"] == "tunnel"
+        set out to out + "(cd / && syn tunnel service remove atril-relay; cd / && syn tunnel release atril-relay) >/dev/null 2>&1; echo 'ATRIL-STEP Cerré el túnel'; "
+    when s["mode"] == "domain" and text(get(s, "domain", "")) != ""
+        set out to out + "rm -f /opt/edge/sites.d/" + s["domain"] + ".json; "
+    when not keep
+        set out to out + join([
+            "if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then systemctl --user disable --now atril-relay >/dev/null 2>&1; rm -f \"$HOME/.config/systemd/user/atril-relay.service\"; systemctl --user daemon-reload; ",
+            "else P=$(cat \"$D/port\" 2>/dev/null); [ -n \"$P\" ] && pkill -f \"serve relay.syn --bind 0.0.0.0 --port $P\" >/dev/null 2>&1; fi; ",
+            "rm -rf \"$D\"; echo 'ATRIL-STEP Apagué el relay'; "], "")
+    give out + "echo ATRIL-DOWN"
+
+-- old → new: on the same device only the ways in that changed go; on another one, all of it
+task teardown(sock, old, new)
+    when old == nothing or old["place"] == "synsema"
+        give nothing
+    let same be new != nothing and new["place"] == old["place"]
+    when same and new["mode"] == old["mode"] and text(get(new, "domain", "")) == text(get(old, "domain", ""))
+        give nothing
+    let trimmed be old
+    when same and (new["mode"] == "tunnel") and old["mode"] == "tunnel"
+        set trimmed to merge(old, {"mode": "kept"})
+    when old["place"] == "local"
+        when old["mode"] == "tunnel"
+            let sc be syn_cmd()
+            run_quiet(sc[0], slice(sc, 1) + ["tunnel", "service", "remove", "atril-relay"], 60)
+            run_quiet(sc[0], slice(sc, 1) + ["tunnel", "release", "atril-relay"], 60)
+        when not same
+            bus_publish("relayhere.ctl", {"t": "stop"})
+            when sock != nothing
+                tell(sock, "Apagué el relay de esta computadora")
+        give nothing
+    let m be machine_by_id(old["place"])
+    when m == nothing
+        give nothing
+    when sock != nothing
+        tell(sock, (when same then "Quitando el acceso anterior en " otherwise "Apagando el relay anterior en ") + m["name"])
+    try
+        when sock != nothing
+            ssh_steps(sock, m, teardown_script(trimmed, same), 120)
+        otherwise
+            run_quiet(ssh_tool("ssh"), ssh_opts(m) + [m["target"], teardown_script(trimmed, same)], 120)
+    recover e
+        let ignored be nothing
+
+-- no relay at all: the phones stay paired but cannot connect until another one is chosen
+task remove_relay()
+    let old be setup_of()
+    teardown(nothing, old, nothing)
+    remote_conf()
+    let c be json_decode(read_file(REMOTE_FILE))
+    set c["setup"] to nothing
+    set c["relay"] to ""
+    write_file(REMOTE_FILE, json_encode(c))
+    bus_publish("remote.ctl", {"t": "stop"})
+
+-- the relay answers, tried for a while (a certificate can take some seconds the first time)
+task probe_until(addr, seconds)
+    let deadline be now() + seconds
+    let pr be relay_probe(addr)
+    while not pr["ok"] and now() < deadline
+        sleep(3)
+        set pr to relay_probe(addr)
+    give pr
+
+-- the window's request, step by step: {place, mode, domain}. Gives {ok, relay, ms} or {error, login}
+task setup_flow(sock, req)
+    let before be setup_of()
+    let place be text(get(req, "place", ""))
+    let mode be text(get(req, "mode", ""))
+    let domain be lower(trim(text(get(req, "domain", ""))))
+    when mode == "synsema"
+        when length(load_machines()) > 0
+            give {"error": "Con otro dispositivo conectado, el relay corre en uno tuyo."}
+        tell(sock, "Probando atril.synsema.io")
+        let pr be relay_probe(RELAY_DEFAULT)
+        when not pr["ok"]
+            give {"error": "atril.synsema.io no responde: " + text(pr["error"])}
+        save_setup({"place": "synsema", "name": "Synsema", "mode": "synsema"}, RELAY_DEFAULT)
+        give {"ok": true, "relay": RELAY_DEFAULT, "ms": pr["ms"]}
+    when not mode in ["ip", "domain", "tunnel"]
+        give {"error": "¿dominio, túnel o ahora no?"}
+    when mode == "domain" and not regex_find_all(domain, "^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$")
+        give {"error": "Escribí un dominio, por ejemplo relay.tudominio.com"}
+    let addr be nothing
+    let name be MACHINE
+    when place == "local"
+        when mode == "ip"
+            give {"error": "Esta computadora no se alcanza por su IP desde el teléfono: elegí dominio o túnel."}
+        let rargs be ["--bind", "127.0.0.1", "--port", text(RELAY_PORT)]
+        when mode == "domain"
+            set rargs to ["--bind", "0.0.0.0", "--port", "443", "--domain", domain, "--tls-auto", "atril@" + domain]
+        when mode == "tunnel"
+            tell(sock, "Buscando la CLI de Synsema en esta computadora")
+            let why be syn_ready_here(sock)
+            when why != nothing
+                give {"error": why}
+        tell(sock, "Dejando el relay corriendo en esta computadora")
+        relay_here(rargs)
+        sleep(2)
+        when mode == "tunnel"
+            tell(sock, "Abriendo el túnel")
+            let sc be syn_cmd()
+            let t be run_quiet(sc[0], slice(sc, 1) + ["tunnel", text(RELAY_PORT), "--name", "atril-relay", "--service", "--json"], 90)
+            let u be regex_capture(t["out"], "https://([A-Za-z0-9.-]+)")
+            when u == nothing
+                give {"error": "El túnel no se abrió: " + slice(trim(t["out"]), -300)}
+            set addr to "wss://" + u[0]
+        otherwise
+            set addr to "wss://" + domain
+        save_setup({"place": "local", "name": MACHINE, "mode": mode, "domain": domain, "args": rargs}, get(remote_conf(), "relay"))
+    otherwise
+        let m be machine_by_id(place)
+        when m == nothing
+            give {"error": "Esa máquina ya no está conectada."}
+        set name to m["name"]
+        tell(sock, "Instalando el relay en " + m["name"])
+        let out be ssh_steps(sock, m, server_script(mode, domain), 720)
+        let failed be regex_capture(out, "ATRIL-FAIL ([^\r\n]*)")
+        when failed != nothing
+            give {"error": failed[0]}
+        let found be regex_capture(out, "ATRIL-ADDR ([^\r\n]*)")
+        when found == nothing
+            give {"error": "No terminó: " + slice(trim(regex_replace(out, "\\s+", " ")), -300)}
+        set addr to replace(trim(found[0]), "HOST", host_of(m))
+    tell(sock, "Probando " + replace(replace(addr, "wss://", ""), "ws://", "") + " desde esta computadora")
+    let pr be probe_until(addr, when mode == "domain" then 90 otherwise 20)
+    when not pr["ok"]
+        let why be text(pr["error"])
+        when mode == "ip"
+            give {"error": "El relay corre en " + name + " pero no responde desde acá (" + why + "). Seguramente el firewall de ese servidor o de tu proveedor no deja pasar el puerto: abrilo, o elegí dominio o túnel."}
+        when mode == "domain"
+            give {"error": "El relay corre, pero " + domain + " no responde (" + why + "). ¿El registro A de " + domain + " apunta a " + (when place == "local" then "esta computadora" otherwise name) + "? Los cambios de DNS pueden tardar unos minutos: Reintentar."}
+        give {"error": "El relay no responde por el túnel: " + why}
+    let prev be setup_of()
+    let now_setup be {"place": place, "name": name, "mode": mode, "domain": domain, "args": get(when prev == nothing then {} otherwise prev, "args", [])}
+    save_setup(now_setup, addr)
+    -- what the relay was before goes away (the phones connected now already follow the new one)
+    teardown(sock, before, now_setup)
+    give {"ok": true, "relay": addr, "ms": pr["ms"]}
+
+task remote_send(ws, s, d)
+    ws_send(ws, json_encode({"s": s, "d": d}))
+
+-- one phone's request to this daemon's own API, answered on the bus
+agent RemoteReq
+    require net("127.0.0.1")
+    require time
+    let h be {"Authorization": "Bearer " + TOKEN, "X-Atril-Remote": dev}
+    let url be "http://127.0.0.1:" + text(PORT) + text(p)
+    let out be {"id": id, "t": "res", "s": 502, "ct": "application/json", "b": "{\"error\": \"the daemon did not answer\"}"}
+    try
+        let body be when b == nothing then "" otherwise b
+        when b != nothing
+            set h["Content-Type"] to "application/json"
+        let res be nothing
+        when m == "GET"
+            set res to http_get(url, h, nothing, 60)
+        otherwise when m == "POST"
+            set res to http_post(url, body, h, 60)
+        otherwise when m == "PUT"
+            set res to http_put(url, body, h, 60)
+        otherwise when m == "DELETE"
+            set res to http_delete(url, h, 60)
+        when res != nothing
+            let hs be headers of res
+            set out to {"id": id, "t": "res", "s": status of res, "ct": get(hs, "content-type", get(hs, "Content-Type", "application/json")), "b": body of res}
+    recover e
+        set out["b"] to json_encode({"error": text(e)})
+    bus_publish("remote.out", {"s": s, "msg": out})
+
+-- one phone's socket to this daemon's own API (events, a terminal), piped both ways
+agent RemoteSock
+    require net("127.0.0.1")
+    require time
+    let inbox be bus_subscribe("rsock." + s + "." + text(id), {"max_queue": 8192, "max_queue_bytes": 67108864})
+    let c be nothing
+    try
+        set c to ws_connect("ws://127.0.0.1:" + text(PORT) + text(p), {"Authorization": "Bearer " + TOKEN, "X-Atril-Remote": dev}, {"timeout": 10})
+    recover e
+        set c to nothing
+    when c == nothing
+        bus_publish("remote.out", {"s": s, "msg": {"id": id, "t": "wsc"}})
+    otherwise
+        bus_publish("remote.out", {"s": s, "msg": {"id": id, "t": "wso"}})
+        let open be true
+        while open
+            let ev be select({"local": c, "in": inbox}, 60)
+            when ev == nothing
+                set open to open
+            otherwise when ev["name"] == "local"
+                when ev["type"] == "close"
+                    bus_publish("remote.out", {"s": s, "msg": {"id": id, "t": "wsc"}})
+                    set open to false
+                otherwise
+                    bus_publish("remote.out", {"s": s, "msg": {"id": id, "t": "wsm", "d": ev["data"]}})
+            otherwise when ev["data"]["t"] == "m"
+                ws_send(c, ev["data"]["d"])
+            otherwise
+                ws_close(c)
+                set open to false
+
+-- a phone's hello → the handshake, or nothing when it is not paired and brings no valid code
+task remote_hello(key, mine, raw)
+    let m be json_decode(raw, nothing)
+    when m == nothing or get(m, "v") != 1
+        give nothing
+    let ep be remote.unb64(m["e"])
+    let pp be remote.unb64(m["s"])
+    let np be remote.unb64(m["n"])
+    when length(ep) != 32 or length(pp) != 32 or length(np) != 16
+        give nothing
+    let pub be remote.b64(pp)
+    let dev be device_by_public(pub)
+    when dev == nothing
+        when not take_pairing(get(m, "c"))
+            give nothing
+        let nm be slice(trim(text(get(m, "name", "phone"))), 0, 40)
+        set dev to {"id": remote.device_id(pp), "public": pub, "name": when nm == "" then "phone" otherwise nm, "created": now(), "last": now()}
+        save_devices(append(where(load_devices(), (x) => x["public"] != pub), dev))
+        bus_publish("remote.devices", {"id": dev["id"]})
+    otherwise
+        save_devices(apply(load_devices(), (x) => when x["public"] == pub then merge(x, {"last": now()}) otherwise x))
+    let ed be ecdh_keypair("X25519")
+    let nd be random_bytes(16)
+    let h be remote.transcript(ep, pp, mine, ed["public"], np, nd)
+    let k be remote.derive(ecdh_shared_secret(key, ep, "X25519"), ecdh_shared_secret(ed["private"], pp, "X25519"), ecdh_shared_secret(ed["private"], ep, "X25519"), h)
+    give {"reply": json_encode({"v": 1, "e": remote.b64(ed["public"]), "n": remote.b64(nd)}), "stream": {"phase": "open", "dev": dev["id"], "kin": k["c2h"], "kout": k["h2c"], "nin": 0, "nout": 0, "socks": []}}
+
+-- the connection to the relay, while a phone is paired or a pairing code waits
+agent Remote
+    require net("127.0.0.1")
+    require net("*")
+    require time
+    require random
+    require file.read
+    require file.write("~/.atril/*")
+    require env("ATRIL_RELAY")
+    let ctl be bus_subscribe("remote.ctl")
+    let out be bus_subscribe("remote.out", {"max_queue": 8192, "max_queue_bytes": 67108864})
+    let key be remote_private()
+    let alive be true
+    let backoff be 1
+    state_set("remote:link", {"status": "connecting", "error": nothing, "since": now()})
+    while alive
+        when (length(load_devices()) == 0 and not pairing_waiting()) or remote_conf()["relay"] == nothing
+            set alive to false
+        otherwise
+            let streams be {}
+            try
+                let c be remote_conf()
+                let ws be ws_connect(c["relay"] + "/host/" + remote.room_of(c["public"]), {}, {"timeout": 10})
+                state_set("remote:link", {"status": "up", "error": nothing, "since": now()})
+                set backoff to 1
+                let holding be true
+                while holding
+                    let ev be select({"relay": ws, "out": out, "ctl": ctl}, 30)
+                    when ev == nothing
+                        when length(load_devices()) == 0 and not pairing_waiting()
+                            set holding to false
+                    otherwise when ev["name"] == "relay"
+                        when ev["type"] == "close"
+                            set holding to false
+                        otherwise
+                            let f be json_decode(ev["data"], nothing)
+                            let s be when f == nothing then nothing otherwise text(get(f, "s", ""))
+                            when f == nothing
+                                set s to nothing
+                            otherwise when get(f, "t") == "open"
+                                set streams[s] to {"phase": "hello"}
+                            otherwise when get(f, "t") == "close"
+                                when contains(streams, s)
+                                    each i in streams[s]["socks"]
+                                        bus_publish("rsock." + s + "." + text(i), {"t": "c"})
+                                    set streams to remove(streams, s)
+                            otherwise when contains(streams, s) and streams[s]["phase"] == "hello"
+                                let hs be remote_hello(key, c["public"], f["d"])
+                                when hs == nothing
+                                    remote_send(ws, s, json_encode({"err": "not paired"}))
+                                    ws_send(ws, json_encode({"t": "close", "s": s}))
+                                    set streams to remove(streams, s)
+                                otherwise
+                                    remote_send(ws, s, hs["reply"])
+                                    let st be hs["stream"]
+                                    remote_send(ws, s, remote.seal(st["kout"], 0, {"t": "ready", "machine": MACHINE, "version": VERSION}))
+                                    set st["nout"] to 1
+                                    set streams[s] to st
+                            otherwise when contains(streams, s)
+                                let st be streams[s]
+                                let r be remote.unseal(st["kin"], st["nin"], f["d"])
+                                when r == nothing
+                                    -- a record that does not open: the connection ends here
+                                    each i in st["socks"]
+                                        bus_publish("rsock." + s + "." + text(i), {"t": "c"})
+                                    ws_send(ws, json_encode({"t": "close", "s": s}))
+                                    set streams to remove(streams, s)
+                                otherwise
+                                    set st["nin"] to st["nin"] + 1
+                                    let t be get(r, "t")
+                                    when t == "req"
+                                        when remote.allowed_path(r["p"])
+                                            spawn RemoteReq with s = s, id = r["id"], m = upper(text(r["m"])), p = r["p"], b = get(r, "b"), dev = st["dev"]
+                                        otherwise
+                                            remote_send(ws, s, remote.seal(st["kout"], st["nout"], {"id": r["id"], "t": "res", "s": 403, "ct": "application/json", "b": "{\"error\": \"not from a phone\"}"}))
+                                            set st["nout"] to st["nout"] + 1
+                                    otherwise when t == "ws"
+                                        when remote.allowed_path(r["p"])
+                                            set st["socks"] to append(st["socks"], r["id"])
+                                            spawn RemoteSock with s = s, id = r["id"], p = r["p"], dev = st["dev"]
+                                        otherwise
+                                            remote_send(ws, s, remote.seal(st["kout"], st["nout"], {"id": r["id"], "t": "wsc"}))
+                                            set st["nout"] to st["nout"] + 1
+                                    otherwise when t == "wsm"
+                                        bus_publish("rsock." + s + "." + text(r["id"]), {"t": "m", "d": r["d"]})
+                                    otherwise when t == "wsc"
+                                        bus_publish("rsock." + s + "." + text(r["id"]), {"t": "c"})
+                                    set streams[s] to st
+                    otherwise when ev["name"] == "out"
+                        let s be ev["data"]["s"]
+                        when contains(streams, s) and streams[s]["phase"] == "open"
+                            let st be streams[s]
+                            remote_send(ws, s, remote.seal(st["kout"], st["nout"], ev["data"]["msg"]))
+                            set st["nout"] to st["nout"] + 1
+                            set streams[s] to st
+                    otherwise when ev["data"]["t"] == "stop"
+                        set holding to false
+                        set alive to false
+                    otherwise when ev["data"]["t"] == "relay"
+                        each s in keys(streams)
+                            when get(streams[s], "phase") == "open"
+                                let st be streams[s]
+                                remote_send(ws, s, remote.seal(st["kout"], st["nout"], {"t": "relay", "relay": ev["data"]["relay"]}))
+                                set st["nout"] to st["nout"] + 1
+                                set streams[s] to st
+                        set holding to false
+                    otherwise when ev["data"]["t"] == "revoke"
+                        each s in keys(streams)
+                            when get(streams[s], "dev") == ev["data"]["id"]
+                                each i in streams[s]["socks"]
+                                    bus_publish("rsock." + s + "." + text(i), {"t": "c"})
+                                ws_send(ws, json_encode({"t": "close", "s": s}))
+                                set streams to remove(streams, s)
+                ws_close(ws)
+            recover err
+                state_set("remote:link", {"status": "down", "error": text(err), "since": now()})
+            each s in keys(streams)
+                each i in get(streams[s], "socks", [])
+                    bus_publish("rsock." + s + "." + text(i), {"t": "c"})
+            when alive
+                let ev be bus_recv(ctl, backoff)
+                when ev != nothing and ev["data"]["t"] == "stop"
+                    set alive to false
+                set backoff to when backoff >= 16 then 30 otherwise backoff * 2
+    state_delete("remote:link")
+
+task start_remote()
+    when length(load_devices()) > 0
+        spawn Remote
 
 -- ---- agents running outside Atril
 --
@@ -1391,6 +2167,77 @@ serve on 7171
     route "GET /api/info" requires auth
         give {"machine": MACHINE, "os": platform()["os"], "version": VERSION}
 
+    -- phones: paired and removed only from this computer (a phone's requests carry X-Atril-Remote,
+    -- and remote.allowed_path keeps them away from here anyway)
+    route "POST /api/remote/pair" requires auth
+        when get(request.headers, "x-atril-remote") != nothing
+            give fail(403, "a phone is paired from the computer")
+        let p be new_pairing()
+        when p == nothing
+            give fail(409, "choose where the relay runs first")
+        let frag be "r=" + p["relay"] + "&h=" + p["room"] + "&k=" + p["key"] + "&c=" + p["code"] + "&m=" + remote.b64(bytes(p["machine"]))
+        let url be env("ATRIL_APP", APP_URL) + "/#" + frag
+        give merge(p, {"url": url, "svg": qr.svg(qr.encode(url), 5)})
+
+    -- the relay: which one, and whether it answers from here (the window measures before you choose)
+    route "GET /api/remote/relay" requires auth
+        give relay_info()
+
+    -- where the relay can run (measured on each device), and the setup, step by step, over a socket
+    route "POST /api/remote/relay/remove" requires auth
+        when get(request.headers, "x-atril-remote") != nothing
+            give fail(403, "the relay is chosen from the computer")
+        remove_relay()
+        give {"ok": true}
+
+    route "GET /api/remote/places" requires auth
+        give relay_places()
+
+    route "GET /api/remote/setup" requires auth
+        timeout none
+        socket
+            let first be ws_recv(socket, 120)
+            let req be when first == nothing or first["type"] != "text" then nothing otherwise json_decode(first["data"], nothing)
+            let result be {"error": "nothing to set up"}
+            when type_of(req) == "map"
+                try
+                    set result to setup_flow(socket, req)
+                recover e
+                    set result to {"error": text(e)}
+            ws_send(socket, json_encode({"t": "done", "result": result}))
+
+    route "POST /api/remote/relay/test" requires auth
+        let a be relay_address(get(json of request, "relay", ""))
+        when a == nothing
+            give fail(400, "write the address of the relay: relay.example.com or wss://relay.example.com")
+        give merge({"relay": a}, relay_probe(a))
+
+    route "POST /api/remote/relay" requires auth
+        when get(request.headers, "x-atril-remote") != nothing
+            give fail(403, "the relay is chosen from the computer")
+        let a be relay_address(get(json of request, "relay", ""))
+        when a == nothing
+            give fail(400, "write the address of the relay: relay.example.com or wss://relay.example.com")
+        let pr be relay_probe(a)
+        when not pr["ok"]
+            give fail(400, "that relay does not answer: " + text(pr["error"]))
+        set_relay(a)
+        give relay_info()
+
+    route "GET /api/remote/devices" requires auth
+        give {"devices": apply(load_devices(), (d) => {"id": d["id"], "name": d["name"], "created": d["created"], "last": d["last"]}), "link": state_get("remote:link", nothing)}
+
+    route "POST /api/remote/devices/:id/remove" requires auth
+        when get(request.headers, "x-atril-remote") != nothing
+            give fail(403, "a phone is removed from the computer")
+        let before be load_devices()
+        let after be where(before, (d) => d["id"] != params.id)
+        when length(after) == length(before)
+            give not_found("no phone with that id")
+        save_devices(after)
+        bus_publish("remote.ctl", {"t": "revoke", "id": params.id})
+        give {"ok": true}
+
     route "GET /api/sessions" requires auth
         give sessions()
 
@@ -1507,6 +2354,9 @@ serve on 7171
 
 -- the links to the other machines open again with the daemon
 cron_after(1, start_links)
+-- the relay, when a phone is paired
+cron_after(2, start_remote)
+cron_after(2, start_relay_here)
 -- and the agents that run outside Atril are looked for now and then
 cron_after(3, refresh_outside)
 cron_every(20, refresh_outside)
