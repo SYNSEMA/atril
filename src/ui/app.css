@@ -376,6 +376,28 @@ b.ok { color: var(--ok); }
 
 /* themes: the menu at the bottom of the sidebar */
 #themebtn { position: absolute; bottom: 10px; left: 14px; font-size: 13px; }
+/* presentation mode: its button beside the theme's, its panel over the bottom of the sidebar */
+#presentbtn { position: absolute; bottom: 10px; left: 84px; font-size: 13px; white-space: nowrap; }
+#presentbtn.on { color: var(--warn); font-weight: 700; }
+#present { position: absolute; left: 8px; bottom: 38px; z-index: 12; width: 300px; max-height: 80vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px 10px; box-shadow: 0 8px 24px var(--shade); font-size: 12px; }
+#present .pt { padding: 10px 0 4px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+#present .pd { margin: 0 0 8px; line-height: 1.45; color: var(--soft); }
+#present .pd.warn { color: var(--warn); margin-top: 10px; }
+#present #ptoggle { width: 100%; padding: 6px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font-weight: 700; }
+.present-on #present #ptoggle { background: var(--warn); }
+#present textarea, #present input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 5px 7px; font: 12px var(--mono); }
+#present textarea { resize: vertical; }
+.present-on #present textarea:not(:focus) { filter: blur(4px); }
+#present .pa { display: grid; grid-template-columns: 90px 1fr; gap: 6px; align-items: center; margin-bottom: 5px; }
+#present .pn { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.present-on #present .pn { filter: blur(4px); }
+.present-on #present input::placeholder { color: transparent; }
+/* the pairing QR, blurred while presenting until you click it: whoever sees it could pair a phone */
+.present-on #qrbox:not(.reveal):not(.used) > * { filter: blur(12px); }
+.present-on #qrbox:not(.reveal):not(.used) { cursor: pointer; position: relative; }
+.present-on #qrbox:not(.reveal):not(.used)::after { content: "clic para mostrar"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text); font-size: 12px; }
+/* the relay's address too: it leads to your server (its IP, its domain) */
+.present-on #relayhost:not(.reveal) { filter: blur(5px); cursor: pointer; user-select: none; }
 #themes { position: absolute; left: 8px; bottom: 38px; z-index: 12; width: 262px; max-height: 70vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 24px var(--shade); }
 #themes .th { padding: 8px 12px 3px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
 #themes button { display: grid; grid-template-columns: 16px 1fr; gap: 0 6px; width: 100%; text-align: left; padding: 5px 12px; }

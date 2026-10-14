@@ -166,7 +166,8 @@ setInterval(async () => {
 
 // ---- sidebar
 const STATUS_TEXT = { up: "conectada", connecting: "conectando…", down: "sin conexión, reintentando" };
-const machineName = (mm) => mm.name || (mm.mid === LOCAL ? "esta computadora" : mm.target);
+const ALIASES = store.get("aliases", {});      // mid -> the name you gave that machine (present.js)
+const machineName = (mm) => ALIASES[mm.mid] || mm.name || (mm.mid === LOCAL ? "esta computadora" : mm.target);
 const ICON_LAPTOP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>';
 const ICON_SERVER = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
 
@@ -639,8 +640,9 @@ function connect(s, t) {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.t === "o") {
-      if (first) { first = false; t.term.write(m.d, () => { t.replaying = false; }); }
-      else t.term.write(m.d);
+      // through present.js: while presenting, what is yours is covered before it is drawn
+      if (first) { first = false; maskWrite(t, m.d, () => { t.replaying = false; }); }
+      else maskWrite(t, m.d);
     } else if (m.t === "exit") {
       t.replaying = false;
       if (t.ended) return;
@@ -1112,7 +1114,8 @@ function showQr(r) {
   const host = r ? r.relay.replace(/^wss?:\/\//, "") : "";
   const where = s.place === "synsema" ? "Relay de Synsema" : s.place === "local" ? "Relay en esta computadora" : `Relay en ${s.name}`;
   const ms = r && r.probe && r.probe.ok && r.probe.ms != null ? ` · un mensaje va y vuelve en ${r.probe.ms} ms` : r && r.probe && !r.probe.ok ? " · no responde ahora" : "";
-  $("#relaynow").textContent = `${where}${MODE[s.mode] ? " (" + MODE[s.mode] + ")" : ""} · ${host}${ms}`;
+  // the relay's address on its own: in presentation mode it is blurred like the QR (it leads to your server)
+  $("#relaynow").replaceChildren(`${where}${MODE[s.mode] ? " (" + MODE[s.mode] + ")" : ""} · `, Object.assign(document.createElement("span"), { id: "relayhost", textContent: host }), ms);
   $("#relaynow").className = r && r.probe && !r.probe.ok ? "warn" : "muted";
   $("#qripnote").hidden = s.mode !== "ip";
   newCode();
@@ -1341,6 +1344,7 @@ $("#ctx").onclick = async (e) => {
     if (a === "forget") return await forgetSpace(ctxSpace);
     if (a === "newtab") { current = ctxSpace.sid; store.set("space2", current); renderSide(); return askTitle(); }
     if (a === "mnew") return openPicker(ctxMachine.mid);
+    if (a === "alias") return openPresent(ctxMachine.mid);
     if (a === "reconnect") return api("POST", `/api/machines/${ctxMachine.mid}/reconnect`);
     if (a === "update") return updateMachine(ctxMachine);
     if (a === "unlink") {
@@ -1363,13 +1367,20 @@ $("#ctx").onclick = async (e) => {
 };
 
 // ---- keys
+// a key in a terminal reaches here twice: from xterm's own handler, and again from the document's as it
+// bubbles up. Once is enough: a toggle (the files panel, the sidebar, presentation) would undo itself
 function shortcuts(e) {
+  if (e.atrilSeen === undefined) e.atrilSeen = shortcutsOnce(e);
+  return e.atrilSeen;
+}
+function shortcutsOnce(e) {
   if (e.type !== "keydown") return true;
   if (e.ctrlKey && e.shiftKey && e.code === "KeyK") { openPalette(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { askTitle(); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (lastTab[current]) closeTab(lastTab[current]); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyE") { setFiles(!FILES.open); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyP") { setPresent(!PRESENT.on); return false; }
   if (e.ctrlKey && e.code === "Tab") {
     const keys = tabsOf(current).map((s) => s.key);
     if (keys.length) focusTab(keys[(keys.indexOf(lastTab[current]) + (e.shiftKey ? -1 : 1) + keys.length) % keys.length]);

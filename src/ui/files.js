@@ -234,6 +234,7 @@ const sameFile = (a, b) => a.sid === b.sid && a.path === b.path;
 // (from a terminal: the space of that terminal, and the line it named, if any)
 // a Markdown file opens to be read, drawn; at a line a terminal named, as the text it is
 async function openFile(path, mode, line = 0, sid = FILES.sid) {
+  if (typeof presentGuard === "function" && !(await presentGuard(path))) return;   // present.js: a .env while presenting
   if (mode === "file" && !line && isMd(path)) mode = "read";
   if (mode === "file" && !line && docKind(path)) mode = "doc";
   VIEW = { sid, path, mode, line, stamp: null };
@@ -242,6 +243,8 @@ async function openFile(path, mode, line = 0, sid = FILES.sid) {
   paintMini();
   $("#viewer").hidden = false;
   $("#vbody").scrollTop = 0;
+  // the keys leave the terminal: Esc minimizes the viewer instead of reaching the program
+  $("#vbody").focus({ preventScroll: true });
   paintFiles();
   await loadView(false);
 }
@@ -656,8 +659,7 @@ function termLinkHandler(key) {
 
 async function openLink(sid, rel, kind, line) {
   if (sid !== current) return;
-  // the keys leave the terminal with it: Esc closes the viewer instead of reaching the program
-  if (kind === "file") { const done = openFile(rel, "file", line, sid); $("#vbody").focus({ preventScroll: true }); return done; }
+  if (kind === "file") return openFile(rel, "file", line, sid);
   // a folder: the panel open, with it unfolded and in view
   if (!FILES.open) setFiles(true);
   else filesSync();
