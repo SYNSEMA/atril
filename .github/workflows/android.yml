@@ -17,15 +17,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -47,7 +47,7 @@ jobs:
         run: |
           printf %s "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
           export ATRIL_KEYSTORE="$RUNNER_TEMP/upload.jks"
-          export ATRIL_VERSION="$(sed -n 's/^let VERSION be "\(.*\)"/\1/p' ../../src/atrild.syn)"
+          export ATRIL_VERSION="$(sed -n 's/^let VERSION be "\(.*\)"/\1/p' ../../src/atrild.syn | tr -d '\r')"
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease bundleRelease
           rm -f "$RUNNER_TEMP/upload.jks"
@@ -57,7 +57,7 @@ jobs:
           APK=mobile/android/app/build/outputs/apk/release/app-release.apk
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/apksigner" verify --print-certs "$APK" | tee /dev/stderr | grep -qi "7f4a6bf710c823d5b88b9e8a8e2a124c2c1de8d9788654a8702787fbb5739047"
-          V=$(sed -n 's/^let VERSION be "\(.*\)"/\1/p' src/atrild.syn)
+          V=$(sed -n 's/^let VERSION be "\(.*\)"/\1/p' src/atrild.syn | tr -d '\r')
           mkdir -p out
           cp "$APK" "out/atril-$V-android.apk"
           cp mobile/android/app/build/outputs/bundle/release/app-release.aab "out/atril-$V-android.aab"
