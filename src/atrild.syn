@@ -1720,10 +1720,13 @@ agent Remote
                 set backoff to 1
                 let holding be true
                 while holding
-                    let ev be select({"relay": ws, "out": out, "ctl": ctl}, 30)
+                    let ev be select({"relay": ws, "out": out, "ctl": ctl}, 25)
                     when ev == nothing
                         when length(load_devices()) == 0 and not pairing_waiting()
                             set holding to false
+                        otherwise
+                            -- a quiet line still talks: the relay (and NATs on the way) close a silent one
+                            ws_send(ws, json_encode({"t": "ping"}))
                     otherwise when ev["name"] == "relay"
                         when ev["type"] == "close"
                             set holding to false
@@ -1739,6 +1742,8 @@ agent Remote
                                     each i in streams[s]["socks"]
                                         bus_publish("rsock." + s + "." + text(i), {"t": "c"})
                                     set streams to remove(streams, s)
+                            otherwise when get(f, "d") == "~"
+                                set s to s   -- a phone's keepalive, forwarded by a relay older than this one
                             otherwise when contains(streams, s) and streams[s]["phase"] == "hello"
                                 let hs be remote_hello(key, c["public"], f["d"])
                                 when hs == nothing

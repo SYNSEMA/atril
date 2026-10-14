@@ -5,7 +5,7 @@
 "use strict";
 
 const FILES = {
-  open: store.get("files", !document.documentElement.classList.contains("atril-phone")),   // on a phone it would cover the terminal
+  open: store.get("files", !document.documentElement.classList.contains("atril-phone") && innerWidth > 720),   // on a phone it would cover the terminal
   width: store.get("filesW", 320),
   pinned: store.get("filesPin", false),   // beside the terminal (it gets narrower) or floating over it
   sid: null,            // the space shown: "mid|key"

@@ -34,7 +34,7 @@ require time
 require random
 
 let MAX_FRAME be 1048576       -- a frame bigger than this closes the connection
-let IDLE be 75                 -- seconds without a word (pings keep a live socket talking)
+let IDLE be 75                 -- seconds without a word: the daemon ({t: "ping"}) and the phones ("~") speak every 25 s
 
 task room_ok(room)
     give regex_find_all(text(room), "^[A-Za-z0-9_-]{16,64}$") != []
@@ -104,6 +104,8 @@ serve on 8796
                         set live to false
                 otherwise when ev["type"] == "close"
                     set live to false
+                otherwise when ev["type"] == "text" and ev["data"] == "~"
+                    set live to true   -- a phone saying it is there: the line stays open, nothing to forward
                 otherwise when ev["type"] == "text" and length(ev["data"]) <= MAX_FRAME
                     bus_publish("relay." + room + ".up", {"s": s, "d": ev["data"]})
                 otherwise

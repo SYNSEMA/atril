@@ -174,7 +174,12 @@
     const ws = new NativeWebSocket(p.relay + "/client/" + p.room);
     let kin = null, kout = null, nin = 0, nout = 0, ready = false;
 
-    ws.onopen = () => ws.send(JSON.stringify({ v: 1, e: b64(ephPub), s: b64(devicePub), n: b64(np), c: p.code || null, name: deviceName() }));
+    let alive = null;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ v: 1, e: b64(ephPub), s: b64(devicePub), n: b64(np), c: p.code || null, name: deviceName() }));
+      // a quiet line still talks: the relay, and the mobile network on the way, close a silent one
+      alive = setInterval(() => { if (ws.readyState === 1) ws.send("~"); }, 25000);
+    };
     // one record at a time, in arrival order: each one opens with the next counter
     let inbound = Promise.resolve();
     ws.onmessage = (ev) => { inbound = inbound.then(() => receive(ev)); };
@@ -224,6 +229,7 @@
       }
     };
     ws.onclose = () => {
+      clearInterval(alive);
       link = null;
       for (const s of sockets.values()) s._closed(1006);
       sockets.clear();

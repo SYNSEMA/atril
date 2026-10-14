@@ -1325,6 +1325,11 @@ $("#adddev").onclick = () => openConnect("phone");
 $("#find").onclick = openPalette;
 $("#menu").onclick = () => $("#side").classList.toggle("show");
 $("#stage").onclick = () => $("#side").classList.remove("show");
+// a tap anywhere outside the open sidebar (the tabs, the shade over the terminal) closes it
+document.addEventListener("click", (e) => {
+  const side = $("#side");
+  if (side.classList.contains("show") && !side.contains(e.target) && !$("#menu").contains(e.target)) side.classList.remove("show");
+}, true);
 
 // ---- start
 (async () => {

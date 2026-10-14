@@ -337,6 +337,19 @@ b.ok { color: var(--ok); }
   #side .small { display: none; }
   #files { position: fixed; inset: 0 0 0 auto; z-index: 6; width: min(90vw, 360px) !important; }
   #fgrip { display: none; }
+  /* a phone: ☰ on the left opens the sidebar over the terminal, + and archivos on the right */
+  #menu { order: -1; padding: 0 14px 0 8px; font-size: 18px; }
+  #side.show { z-index: 8; }
+  #app:has(#side.show)::after { content: ""; position: fixed; inset: 0; background: var(--shade); z-index: 7; }
+  #find kbd { display: none; }
+  #fpin { display: none; }
+  #plus .lbl { display: none; }
+  #plus { padding: 0 14px; }
+  #plus span { font-size: 18px; }
+}
+@media (pointer: coarse) {
+  #tabs { height: 42px; }
+  .tab { padding: 0 12px 0 14px; }
 }
 
 /* the note that asks for a star (star.js): a corner, above the terminal, never in the way of typing */
