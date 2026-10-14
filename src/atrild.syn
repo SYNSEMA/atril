@@ -1608,6 +1608,18 @@ task setup_flow(sock, req)
     teardown(sock, before, now_setup)
     give {"ok": true, "relay": addr, "ms": pr["ms"]}
 
+-- ~/.atril/remote.log: when the link to the relay and each phone's connection opened and closed, and why
+-- (times and reasons only, never what went through). Kept under 512 KB: the older half goes
+task rlog(line)
+    try
+        let path be "~/.atril/remote.log"
+        when file_exists(path) and file_info(path)["size"] > 524288
+            let old be read_file(path)
+            write_file(path, slice(old, floor(length(old) / 2)))
+        append_file(path, text(now()) + " " + line + "\n")
+    recover e
+        let ignored be nothing
+
 task remote_send(ws, s, d)
     ws_send(ws, json_encode({"s": s, "d": d}))
 
@@ -1720,6 +1732,7 @@ agent Remote
                 let c be remote_conf()
                 let ws be ws_connect(c["relay"] + "/host/" + remote.room_of(c["public"]), {}, {"timeout": 10})
                 state_set("remote:link", {"status": "up", "error": nothing, "since": now()})
+                rlog("relay up " + c["relay"])
                 set backoff to 1
                 let holding be true
                 while holding
@@ -1732,6 +1745,7 @@ agent Remote
                             ws_send(ws, json_encode({"t": "ping"}))
                     otherwise when ev["name"] == "relay"
                         when ev["type"] == "close"
+                            rlog("relay closed the link")
                             set holding to false
                         otherwise
                             let f be json_decode(ev["data"], nothing)
@@ -1740,7 +1754,9 @@ agent Remote
                                 set s to nothing
                             otherwise when get(f, "t") == "open"
                                 set streams[s] to {"phase": "hello"}
+                                rlog("phone " + slice(s, 0, 6) + " opened")
                             otherwise when get(f, "t") == "close"
+                                rlog("phone " + slice(s, 0, 6) + " closed (relay says the phone left)")
                                 when contains(streams, s)
                                     each i in streams[s]["socks"]
                                         bus_publish("rsock." + s + "." + text(i), {"t": "c"})
@@ -1750,12 +1766,14 @@ agent Remote
                             otherwise when contains(streams, s) and streams[s]["phase"] == "hello"
                                 let hs be remote_hello(key, c["public"], f["d"])
                                 when hs == nothing
+                                    rlog("phone " + slice(s, 0, 6) + " refused: not paired or bad hello")
                                     remote_send(ws, s, json_encode({"err": "not paired"}))
                                     ws_send(ws, json_encode({"t": "close", "s": s}))
                                     set streams to remove(streams, s)
                                 otherwise
                                     remote_send(ws, s, hs["reply"])
                                     let st be hs["stream"]
+                                    rlog("phone " + slice(s, 0, 6) + " ready (device " + st["dev"] + ")")
                                     remote_send(ws, s, remote.seal(st["kout"], 0, {"t": "ready", "machine": MACHINE, "version": VERSION}))
                                     set st["nout"] to 1
                                     set streams[s] to st
@@ -1764,6 +1782,7 @@ agent Remote
                                 let r be remote.unseal(st["kin"], st["nin"], f["d"])
                                 when r == nothing
                                     -- a record that does not open: the connection ends here
+                                    rlog("phone " + slice(s, 0, 6) + " sent a record that does not open (counter " + text(st["nin"]) + "): cut")
                                     each i in st["socks"]
                                         bus_publish("rsock." + s + "." + text(i), {"t": "c"})
                                     ws_send(ws, json_encode({"t": "close", "s": s}))
@@ -1786,6 +1805,10 @@ agent Remote
                                             set st["nout"] to st["nout"] + 1
                                     otherwise when t == "wsm"
                                         bus_publish("rsock." + s + "." + text(r["id"]), {"t": "m", "d": r["d"]})
+                                    otherwise when t == "log"
+                                        -- what the phone saw on its side since it last connected
+                                        each item in (when type_of(get(r, "items")) == "list" then slice(r["items"], -50) otherwise [])
+                                            rlog("phone " + st["dev"] + " says " + slice(json_encode(item), 0, 300))
                                     otherwise when t == "wsc"
                                         bus_publish("rsock." + s + "." + text(r["id"]), {"t": "c"})
                                     set streams[s] to st
@@ -1817,6 +1840,7 @@ agent Remote
                 ws_close(ws)
             recover err
                 state_set("remote:link", {"status": "down", "error": text(err), "since": now()})
+                rlog("relay down: " + text(err))
             each s in keys(streams)
                 each i in get(streams[s], "socks", [])
                     bus_publish("rsock." + s + "." + text(i), {"t": "c"})

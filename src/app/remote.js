@@ -84,6 +84,18 @@
   }
 
   // ---- the link: one handshake, then sealed records both ways
+  // what this side saw (a connection that ended, and how): kept until the computer gets it
+  function plog(ev) {
+    try {
+      const a = JSON.parse(localStorage.getItem("atril.log") || "[]");
+      a.push({ at: Math.round(Date.now() / 1000), hidden: document.hidden, online: navigator.onLine, ...ev });
+      localStorage.setItem("atril.log", JSON.stringify(a.slice(-50)));
+    } catch {}
+  }
+  function takeLog() {
+    try { const a = JSON.parse(localStorage.getItem("atril.log") || "[]"); localStorage.removeItem("atril.log"); return a; } catch { return []; }
+  }
+
   let link = null;           // {send(obj)} once the daemon said it is ready
   let waiting = [];          // what the window asked before that
   let nextId = 1;
@@ -233,15 +245,22 @@
           };
           const w = waiting; waiting = [];
           w.forEach((o) => link.send(o));
+          const seen = takeLog();
+          if (seen.length) link.send({ t: "log", items: seen });
           return;
         }
-        deliver(msg);
+        // the window's own handlers run outside: an error of theirs is not a broken record, and must not
+        // end the connection (it is noted, for the computer's log)
+        try { deliver(msg); } catch (err) { plog({ ev: "window error", t: msg.t, err: String(err && err.message || err).slice(0, 160) }); }
       } catch (e) {
         // a record that does not open is not ours to guess about: drop the connection
+        plog({ ev: "bad record", err: String(e && e.message || e).slice(0, 120), nin });
         ws.close();
       }
     };
-    ws.onclose = () => {
+    const opened = Date.now();
+    ws.onclose = (e) => {
+      plog({ ev: "closed", code: e.code, reason: (e.reason || "").slice(0, 80), was_ready: ready, lasted: Math.round((Date.now() - opened) / 1000) });
       clearInterval(alive);
       link = null;
       for (const s of sockets.values()) s._closed(1006);

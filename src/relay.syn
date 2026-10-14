@@ -36,6 +36,11 @@ require random
 let MAX_FRAME be 1048576       -- a frame bigger than this closes the connection
 let IDLE be 75                 -- seconds without a word: the daemon ({t: "ping"}) and the phones ("~") speak every 25 s
 
+-- one line on stderr per connection that ends: when, which (6 characters of room and stream), why.
+-- Never what went through: it is sealed anyway
+task note(what)
+    eprint(text(round(now())) + " " + what)
+
 task room_ok(room)
     give regex_find_all(text(room), "^[A-Za-z0-9_-]{16,64}$") != []
 
@@ -65,19 +70,24 @@ serve on 8796
             let me be token(16)
             state_set("relay:" + room, me)
             let up be bus_subscribe("relay." + room + ".up")
+            note("host " + slice(room, 0, 6) + " in")
+            let why be "?"
             let live be true
             while live
                 let ev be select({"host": socket, "up": up}, IDLE)
                 when ev == nothing
+                    set why to "silent " + text(IDLE) + " s"
                     set live to false
                 otherwise when ev["name"] == "up"
                     ws_send(socket, json_encode(ev["data"]))
                 otherwise when ev["type"] == "close"
+                    set why to "it closed"
                     set live to false
                 otherwise when ev["type"] == "text" and length(ev["data"]) <= MAX_FRAME
                     let m be json_decode(ev["data"], nothing)
                     when m != nothing and contains(m, "s")
                         bus_publish("relay." + room + "." + text(m["s"]), m)
+            note("host " + slice(room, 0, 6) + " out: " + why)
             -- the phones of this room lose their daemon: they reconnect when it is back
             bus_publish("relay." + room + ".gone", {"t": "gone"})
             when state_get("relay:" + room, nothing) == me
@@ -92,23 +102,30 @@ serve on 8796
             let s be token(16)
             let down be bus_subscribe(["relay." + room + "." + s, "relay." + room + ".gone"])
             bus_publish("relay." + room + ".up", {"t": "open", "s": s})
+            note("phone " + slice(room, 0, 6) + "/" + slice(s, 0, 6) + " in")
+            let why be "?"
             let live be true
             while live
                 let ev be select({"phone": socket, "down": down}, IDLE)
                 when ev == nothing
+                    set why to "silent " + text(IDLE) + " s"
                     set live to false
                 otherwise when ev["name"] == "down"
                     when contains(ev["data"], "d")
                         ws_send(socket, ev["data"]["d"])
                     otherwise
+                        set why to when get(ev["data"], "t") == "gone" then "its host left" otherwise "its host closed it"
                         set live to false
                 otherwise when ev["type"] == "close"
+                    set why to "it closed"
                     set live to false
                 otherwise when ev["type"] == "text" and ev["data"] == "~"
                     set live to true   -- a phone saying it is there: the line stays open, nothing to forward
                 otherwise when ev["type"] == "text" and length(ev["data"]) <= MAX_FRAME
                     bus_publish("relay." + room + ".up", {"s": s, "d": ev["data"]})
                 otherwise
+                    set why to "a frame it should not send (" + text(ev["type"]) + ")"
                     set live to false
+            note("phone " + slice(room, 0, 6) + "/" + slice(s, 0, 6) + " out: " + why)
             bus_publish("relay." + room + ".up", {"t": "close", "s": s})
             ws_close(socket)
