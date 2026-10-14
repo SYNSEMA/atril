@@ -1,0 +1,7 @@
+{
+  "appId": "com.synsema.atril",
+  "appName": "Atril",
+  "webDir": "www",
+  "server": { "androidScheme": "https", "hostname": "localhost" },
+  "android": { "allowMixedContent": true }
+}

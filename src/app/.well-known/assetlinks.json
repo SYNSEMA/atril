@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.synsema.atril",
+    "sha256_cert_fingerprints": [
+      "7F:4A:6B:F7:10:C8:23:D5:B8:8B:9E:8A:8E:2A:12:4C:2C:1D:E8:D9:78:86:54:A8:70:27:87:FB:B5:73:90:47"
+    ]
+  }
+}]

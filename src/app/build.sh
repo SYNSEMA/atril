@@ -10,10 +10,10 @@ rm -rf "$out"
 mkdir -p "$out"
 cp -R "$here/../ui/." "$out/"
 cp "$here/remote.js" "$out/remote.js"
+# the Android app opens the pairing links of this origin (the upload key's fingerprint; Play's joins it later)
+mkdir -p "$out/.well-known" && cp "$here/.well-known/assetlinks.json" "$out/.well-known/"
 # remote.js goes right before the first script of the page
 awk 'BEGIN { done = 0 } /<script src=/ && !done { print "<script src=\"remote.js\"></script>"; done = 1 } { print }' \
     "$here/../ui/index.html" > "$out/index.html"
 grep -q '<script src="remote.js"></script>' "$out/index.html" || { echo "build.sh: no <script> in index.html" >&2; exit 1; }
-echo "app.atril.synsema.io" > "$out/CNAME"
-touch "$out/.nojekyll"
 echo "app: $out"

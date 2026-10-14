@@ -1,0 +1,69 @@
+# Builds Atril for Android (mobile/, Capacitor): the window of src/ui and src/app/remote.js inside the
+# app, signed with the upload key kept in this repository's secrets (ANDROID_KEYSTORE_B64,
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS). The .apk installs by hand; the .aab goes to Google Play.
+# On every push to phone that touches the app, and by hand from the Actions tab.
+name: android
+
+on:
+  push:
+    branches: [phone]
+    paths: ["mobile/**", "src/ui/**", "src/app/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: The window and remote.js into the app
+        working-directory: mobile
+        run: |
+          npm ci
+          npm run sync
+
+      - name: Build and sign
+        working-directory: mobile/android
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ATRIL_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ATRIL_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ATRIL_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          printf %s "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          export ATRIL_KEYSTORE="$RUNNER_TEMP/upload.jks"
+          export ATRIL_VERSION="$(sed -n 's/^let VERSION be "\(.*\)"/\1/p' ../../src/atrild.syn)"
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease bundleRelease
+          rm -f "$RUNNER_TEMP/upload.jks"
+
+      - name: Check the signature
+        run: |
+          APK=mobile/android/app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" | tee /dev/stderr | grep -qi "7f4a6bf710c823d5b88b9e8a8e2a124c2c1de8d9788654a8702787fbb5739047"
+          V=$(sed -n 's/^let VERSION be "\(.*\)"/\1/p' src/atrild.syn)
+          mkdir -p out
+          cp "$APK" "out/atril-$V-android.apk"
+          cp mobile/android/app/build/outputs/bundle/release/app-release.aab "out/atril-$V-android.aab"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atril-android
+          path: out/
+          if-no-files-found: error

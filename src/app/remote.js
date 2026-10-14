@@ -93,21 +93,77 @@
   let refused = false;       // the daemon does not know this phone: no point in trying again
   const WAIT = 20000;        // what a request waits for the link before failing like a fetch without network
 
-  function note(text) {
+  // a line at the bottom of the window; in the app it can carry a button (Escanear código)
+  function note(text, action) {
     let el = document.getElementById("atril-remote-note");
     if (!text) { if (el) el.remove(); return; }
     if (!el) {
       el = document.createElement("div");
       el.id = "atril-remote-note";
-      el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:99999;padding:10px 14px;font:13px/1.4 ui-monospace,monospace;background:#1b1b1f;color:#e6e6ea;border-top:1px solid #333";
+      el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:99999;padding:10px 14px;font:13px/1.4 ui-monospace,monospace;background:#1b1b1f;color:#e6e6ea;border-top:1px solid #333;display:flex;gap:12px;align-items:center";
       (document.body || document.documentElement).appendChild(el);
     }
-    el.textContent = text;
+    el.textContent = "";
+    const t = document.createElement("span");
+    t.style.flex = "1";
+    t.textContent = text;
+    el.append(t);
+    if (action) {
+      const b = document.createElement("button");
+      b.textContent = action.label;
+      b.style.cssText = "flex:none;padding:8px 14px;border:0;border-radius:4px;background:#8fb4ff;color:#0b0b10;font:700 13px ui-monospace,monospace";
+      b.onclick = action.run;
+      el.append(b);
+    }
+  }
+
+  // ---- the Android app: the same page inside it, plus a way in for the pairing link
+  const native = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const plugin = (name) => (native && window.Capacitor.Plugins ? window.Capacitor.Plugins[name] : null);
+  const scanAction = native ? { label: "Escanear código", run: () => scan() } : null;
+  const HOW = native
+    ? "En Atril, en tu computadora: Agregar dispositivo → Teléfono; después tocá Escanear código."
+    : "En Atril, en tu computadora: Agregar dispositivo → Teléfono, y escaneá el código.";
+
+  // a pairing link (what the QR holds) → this page with it in the fragment, once
+  function adopt(url) {
+    let u;
+    try { u = new URL(url); } catch { return false; }
+    const f = new URLSearchParams(u.hash.slice(1));
+    if (!f.get("k") || !f.get("h") || !f.get("r")) return false;
+    try { if (localStorage.getItem("atril.adopted") === u.hash) return true; localStorage.setItem("atril.adopted", u.hash); } catch {}
+    history.replaceState(null, "", location.pathname + u.hash);
+    location.reload();
+    return true;
+  }
+  async function scan() {
+    const S = plugin("BarcodeScanner");
+    if (!S) return;
+    try {
+      const has = await S.isGoogleBarcodeScannerModuleAvailable();
+      if (!has.available) {
+        note("Preparando el lector de códigos (una sola vez)…");
+        await S.installGoogleBarcodeScannerModule();
+        for (let i = 0; i < 90 && !(await S.isGoogleBarcodeScannerModuleAvailable()).available; i++) await new Promise((r) => setTimeout(r, 1000));
+      }
+      const { barcodes } = await S.scan({ formats: ["QR_CODE"] });
+      const raw = barcodes && barcodes[0] && barcodes[0].rawValue;
+      if (raw && !adopt(raw)) note("Ese código no es de Atril. " + HOW, scanAction);
+    } catch (e) {
+      note("No se pudo escanear: " + (e && e.message ? e.message : e), scanAction);
+    }
+  }
+  if (native) {
+    const App = plugin("App");
+    if (App) {
+      App.addListener("appUrlOpen", (e) => adopt(e.url));
+      App.getLaunchUrl().then((r) => { if (r && r.url) adopt(r.url); }).catch(() => {});
+    }
   }
 
   async function connect() {
     const p = pairing();
-    if (!p) { note("Este teléfono no está emparejado. En Atril, en tu computadora: Agregar dispositivo → Teléfono, y escaneá el código."); return; }
+    if (!p) { note("Este teléfono no está emparejado. " + HOW, scanAction); return; }
     note("Conectando con " + (p.machine || "tu computadora") + "…");
     const device = await deviceKey();
     const devicePub = new Uint8Array(await subtle.exportKey("raw", device.publicKey));
@@ -173,7 +229,7 @@
       sockets.clear();
       for (const [id, done] of pending) done(null);
       pending.clear();
-      if (refused) { note("Tu computadora no reconoce este teléfono (lo quitaron, o el código venció). Emparejalo de nuevo: en Atril, Agregar dispositivo → Teléfono."); return; }
+      if (refused) { note("Tu computadora no reconoce este teléfono (lo quitaron, o el código venció). Emparejalo de nuevo. " + HOW, scanAction); return; }
       note("Sin conexión con " + (p.machine || "tu computadora") + ": reintentando…");
       setTimeout(connect, backoff * 1000);
       backoff = Math.min(backoff * 2, 30);
