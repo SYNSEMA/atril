@@ -486,6 +486,7 @@ function makeTerm(s) {
   term.attachCustomKeyEventHandler((e) => shortcuts(e) && clipboardKeys(t, e));
   clipboardMouse(t);
   el.addEventListener("pointerdown", () => claim(t));
+  touchScroll(el);
   terms.set(s.key, t);
   connect(s, t);
   term.onData((d) => {
@@ -503,6 +504,30 @@ function makeTerm(s) {
     }
   });
   return t;
+}
+
+// ---- a finger on a phone scrolls like a mouse wheel: the history of the terminal, or the program itself
+// when it handles the wheel (an agent, less, vim). A drag of a few pixels is a scroll; a tap stays a tap
+function touchScroll(el) {
+  let y = null, moved = false, acc = 0;
+  el.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { y = null; return; }
+    y = e.touches[0].clientY; moved = false; acc = 0;
+  }, { passive: true });
+  el.addEventListener("touchmove", (e) => {
+    if (y === null || e.touches.length !== 1) return;
+    const ny = e.touches[0].clientY;
+    acc += y - ny;
+    y = ny;
+    if (!moved && Math.abs(acc) < 8) return;
+    moved = true;
+    e.preventDefault();
+    const target = el.querySelector(".xterm-screen") || el;
+    target.dispatchEvent(new WheelEvent("wheel", { deltaY: acc / 2, deltaMode: 0,   // xterm moves about twice the pixels of a wheel: /2 follows the finger
+      bubbles: true, cancelable: true, clientX: e.touches[0].clientX, clientY: ny }));
+    acc = 0;
+  }, { passive: false });
+  el.addEventListener("touchend", (e) => { if (moved) e.preventDefault(); y = null; }, { passive: false });
 }
 
 // ---- copy and paste in a terminal, as in Windows Terminal: Ctrl+C copies when there is a selection
