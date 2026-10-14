@@ -100,7 +100,7 @@
     if (!el) {
       el = document.createElement("div");
       el.id = "atril-remote-note";
-      el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:99999;padding:10px 14px;font:13px/1.4 ui-monospace,monospace;background:#1b1b1f;color:#e6e6ea;border-top:1px solid #333;display:flex;gap:12px;align-items:center";
+      el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:99999;padding:10px 14px;font:13px/1.4 ui-monospace,monospace;background:#1b1b1f;color:#e6e6ea;border-top:1px solid #333;display:flex;gap:12px;align-items:center;padding-bottom:calc(10px + var(--sab, 0px))";
       (document.body || document.documentElement).appendChild(el);
     }
     el.textContent = "";
@@ -154,6 +154,19 @@
     }
   }
   if (native) {
+    // the status bar's icons light on a dark theme, dark on a light one (the theme can change any time)
+    const Bars = plugin("SystemBars");
+    let barStyle = "";
+    const paintBars = () => {
+      const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(bg);
+      if (!m || !Bars) return;
+      const lum = 0.2126 * parseInt(m[1], 16) + 0.7152 * parseInt(m[2], 16) + 0.0722 * parseInt(m[3], 16);
+      const style = lum < 128 ? "DARK" : "LIGHT";
+      if (style !== barStyle) { barStyle = style; Bars.setStyle({ style }).catch(() => {}); }
+    };
+    new MutationObserver(paintBars).observe(document.documentElement, { attributes: true });
+    window.addEventListener("load", paintBars);
     const App = plugin("App");
     if (App) {
       App.addListener("appUrlOpen", (e) => adopt(e.url));

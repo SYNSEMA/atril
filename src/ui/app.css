@@ -37,7 +37,11 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 /* what you select with the mouse: the theme says both colors, so it reads on a light theme too */
 ::selection { background: var(--selection); color: var(--selection-text); }
 
-#app { display: flex; height: 100dvh; }
+/* the phone's status bar and gesture bar: the app draws behind them (Android 15+), so it starts below
+   and ends above, and the strips take the theme's background. In the Android app Capacitor gives the
+   sizes as --safe-area-inset-*; a browser gives env(); a computer, 0 */
+:root { --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)); --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)); }
+#app { display: flex; height: 100dvh; box-sizing: border-box; padding-top: var(--sat); padding-bottom: var(--sab); }
 
 /* sidebar */
 #side { width: 280px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 14px 10px; gap: 6px; position: relative; }
@@ -332,10 +336,10 @@ b.ok { color: var(--ok); }
 @media (hover: hover) and (pointer: fine) { .only-touch { display: none !important; } }
 @media (max-width: 720px) {
   .only-narrow { display: block; }
-  #side { position: fixed; inset: 0 auto 0 0; z-index: 5; width: min(86vw, 320px); transform: translateX(-100%); transition: transform .15s; }
+  #side { position: fixed; inset: 0 auto 0 0; z-index: 5; width: min(86vw, 320px); transform: translateX(-100%); transition: transform .15s; padding-top: calc(14px + var(--sat)); padding-bottom: calc(14px + var(--sab)); box-sizing: border-box; }
   #side.show { transform: none; }
   #side .small { display: none; }
-  #files { position: fixed; inset: 0 0 0 auto; z-index: 6; width: min(90vw, 360px) !important; }
+  #files { position: fixed; inset: 0 0 0 auto; z-index: 6; width: min(90vw, 360px) !important; top: var(--sat) !important; bottom: var(--sab) !important; }
   #fgrip { display: none; }
   /* a phone: ☰ on the left opens the sidebar over the terminal, + and archivos on the right */
   #menu { order: -1; padding: 0 14px 0 8px; font-size: 18px; }
