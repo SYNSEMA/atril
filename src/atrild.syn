@@ -1708,8 +1708,18 @@ task rlog(line)
     recover e
         let ignored be nothing
 
+-- A record bigger than a piece goes in pieces: every piece but the last starts with "&" (never in base64
+-- nor in the handshake's JSON) and the phone joins them before opening it. A relay drops a frame over
+-- 1 MB, and a terminal's scrollback alone can be more: the phone then lost a record, the next one did
+-- not open with its counter, and the line was cut and opened again, over and over
+let REMOTE_PIECE be 262144
 task remote_send(ws, s, d)
-    ws_send(ws, json_encode({"s": s, "d": d}))
+    let n be length(d)
+    let i be 0
+    while n - i > REMOTE_PIECE
+        ws_send(ws, json_encode({"s": s, "d": "&" + slice(d, i, i + REMOTE_PIECE)}))
+        set i to i + REMOTE_PIECE
+    ws_send(ws, json_encode({"s": s, "d": when i == 0 then d otherwise slice(d, i, n)}))
 
 -- one phone's request to this daemon's own API, answered on the bus
 agent RemoteReq

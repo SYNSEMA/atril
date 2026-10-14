@@ -207,7 +207,14 @@
     };
     // one record at a time, in arrival order: each one opens with the next counter
     let inbound = Promise.resolve();
-    ws.onmessage = (ev) => { inbound = inbound.then(() => receive(ev)); };
+    // a big record comes in pieces: each one but the last starts with "&", joined here before it opens
+    let pieces = "";
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === "string" && ev.data[0] === "&") { pieces += ev.data.slice(1); return; }
+      const whole = pieces ? { data: pieces + ev.data } : ev;
+      pieces = "";
+      inbound = inbound.then(() => receive(whole));
+    };
     const receive = async (ev) => {
       try {
         if (!kin) {
