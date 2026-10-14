@@ -546,6 +546,7 @@ agent Session
     let last_in be 0            -- the last key that reached the program
     let screen be ""            -- the last few thousand characters as a person reads them
     let screen_kind be nothing  -- the agent the screen shows running, when it shows one
+    let proc_kind be nothing    -- the agent the processes last said runs in this shell (scan_outside)
     let folder be nothing       -- where the shell last said it was
     let kill_at be nothing      -- asked to end: when to stop asking nicely
     -- whatever goes wrong in here, the session must not stay "running" with nobody reading it
@@ -556,6 +557,20 @@ agent Session
                 proc_kill(p, "KILL")
                 set kill_at to nothing
             when ev == nothing
+                -- what the processes say runs in this shell changed (an agent found, or gone): the kind
+                -- again now, without waiting for output (once an agent ends, the shell prints only its prompt)
+                let found be get(state_get("inside", {}), text(meta["pid"]))
+                when found != proc_kind
+                    set proc_kind to found
+                    when found == nothing
+                        let seen be read_screen(screen)
+                        when seen != nothing and seen["at_prompt"]
+                            set screen_kind to nothing
+                    let tk be kind_from_title(meta["title"])
+                    let k2 be when tk != nothing then tk otherwise (when found != nothing then found otherwise (when screen_kind != nothing then screen_kind otherwise kind_of(cmd)))
+                    when k2 != meta["kind"]
+                        set meta["kind"] to k2
+                        publish_meta(meta)
                 -- quiet for 3 s: an agent waiting for you, or a shell at its prompt
                 when meta["activity"] == "working" and now() - last_out > 3
                     set meta["activity"] to "idle"
@@ -605,7 +620,11 @@ agent Session
                 -- reading the screen is a nicety: a mistake in it must never take the terminal down
                 try
                     set screen to slice(screen + strip_ansi(chunk), -6000)
-                    let seen be read_screen(screen)
+                    -- an agent the processes say runs in this shell (see scan_outside) is the truth, and
+                    -- then the screen is the agent's, not the shell's: a "PS C:\…>" in what it prints
+                    -- is text, not a prompt, and must not end it or move the session to another folder
+                    let running be get(state_get("inside", {}), text(meta["pid"]))
+                    let seen be when running != nothing then nothing otherwise read_screen(screen)
                     when seen != nothing
                         -- Enter after the last prompt: what was typed runs until a new prompt appears, even
                         -- while it has printed nothing but control codes yet (a full-screen program starting)
@@ -629,7 +648,7 @@ agent Session
                                 set meta["space"] to add_space(target)
                             set changed to true
                     let tk be kind_from_title(meta["title"])
-                    let kind be when tk != nothing then tk otherwise (when screen_kind != nothing then screen_kind otherwise kind_of(cmd))
+                    let kind be when tk != nothing then tk otherwise (when running != nothing then running otherwise (when screen_kind != nothing then screen_kind otherwise kind_of(cmd)))
                     when kind != meta["kind"]
                         set meta["kind"] to kind
                         set changed to true
@@ -1935,7 +1954,10 @@ task start_remote()
 
 -- the agent a command line runs, or nothing: its program, or what an interpreter (node, bun…) runs
 task agent_in_cmdline(cmd)
-    let words be where(split(trim(text(cmd)), " "), (w) => w != "")
+    -- Windows quotes a program under a folder with spaces: "C:\Program Files\nodejs\node.exe" x.js
+    let c be trim(text(cmd))
+    let q be regex_capture(c, "^\"([^\"]*)\"\\s*(.*)$")
+    let words be when q != nothing then [q[0]] + where(split(q[1], " "), (w) => w != "") otherwise where(split(c, " "), (w) => w != "")
     when length(words) == 0
         give nothing
     let first be lower(regex_replace(regex_replace(replace(words[0], "\"", ""), "^.*[\\\\/]", ""), "\\.(exe|cmd|bat)$", ""))
@@ -1977,6 +1999,7 @@ task scan_outside()
         set parent[text(pr["pid"])] to pr["ppid"]
         set kind[text(pr["pid"])] to agent_in_cmdline(pr["cmd"])
     let found be []
+    let inside_of be {}   -- a session's pid -> the agent that runs in it
     each pr in procs
         let k be kind[text(pr["pid"])]
         when k != nothing and kind[text(pr["ppid"])] != k
@@ -1987,10 +2010,13 @@ task scan_outside()
             while up != nothing and up > 1 and depth < 40 and not inside
                 when up in own
                     set inside to true
+                    set inside_of[text(up)] to k
                 set up to get(parent, text(up))
                 set depth to depth + 1
             when not inside and pr["pid"] not in own
                 set found to found + [{"pid": pr["pid"], "kind": k, "age": pr["age"], "cwd": nothing}]
+    -- the sessions learn it on their next output (an agent at rest still sends some now and then)
+    state_set("inside", inside_of)
     -- where each one works (Linux: /proc/<pid>/cwd)
     when length(found) > 0 and platform()["os"] == "linux"
         let r be run_quiet("sh", ["-c", "for p in " + join(apply(found, (f) => text(f["pid"])), " ") + "; do echo \"$p $(readlink /proc/$p/cwd)\"; done"], 10)
