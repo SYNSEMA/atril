@@ -567,6 +567,7 @@ function makeTerm(s) {
   term.attachCustomKeyEventHandler((e) => shortcuts(e) && clipboardKeys(t, e));
   clipboardMouse(t);
   fileLinks(t, s.key);   // files.js: a path printed in the terminal opens with a click
+  fileDrop(t, s.key);    // files.js: a file of the panel dropped here is written as its path
   el.addEventListener("pointerdown", () => claim(t));
   touchScroll(el);
   terms.set(s.key, t);
@@ -1369,8 +1370,9 @@ let ctxSpace = null;
 let ctxMachine = null;
 function place(m, x, y) {
   m.hidden = false;
-  m.style.left = Math.min(x, innerWidth - 220) + "px";
-  m.style.top = Math.min(y, innerHeight - 160) + "px";
+  // inside the window, however long the menu is
+  m.style.left = Math.max(4, Math.min(x, innerWidth - m.offsetWidth - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(y, innerHeight - m.offsetHeight - 4)) + "px";
 }
 function only(kind) { for (const b of $("#ctx").querySelectorAll("button")) b.hidden = (b.dataset.for || "session") !== kind; }
 function showCtx(key, x, y) {
@@ -1403,6 +1405,7 @@ $("#ctx").onclick = async (e) => {
   if (!a) return;
   $("#ctx").hidden = true;
   try {
+    if (a.startsWith("file-")) return fileMenuAction(a.slice(5));   // files.js
     if (a === "forget") return await forgetSpace(ctxSpace);
     if (a === "sptoboard") return await boardAddSpace(ctxSpace);
     if (a === "newtab") { current = ctxSpace.sid; store.set("space2", current); renderSide(); return askTitle(); }

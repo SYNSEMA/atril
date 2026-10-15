@@ -291,6 +291,13 @@ b.ok { color: var(--ok); }
 .fr { display: flex; align-items: baseline; gap: 6px; padding: 2px 10px 2px 8px; font-size: 13px; cursor: pointer; white-space: nowrap; color: var(--text); }
 .fr:hover { background: var(--hover); }
 .fr.on { background: var(--sel); }
+.fr.sel { box-shadow: inset 2px 0 0 var(--accent); }
+#ftree:focus, #fchanges:focus { outline: none; }
+#ctx button:has(kbd) { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; white-space: nowrap; }
+#ctx button kbd { color: var(--dim); font: 11px var(--mono); }
+.term.fdrop { outline: 2px dashed var(--accent); outline-offset: -4px; }
+#ftoast { position: fixed; z-index: 30; left: 50%; bottom: 28px; transform: translateX(-50%); max-width: min(90vw, 640px); padding: 7px 14px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 24px rgba(0,0,0,.35); pointer-events: none; transition: opacity .2s; }
+#ftoast[hidden] { display: block; opacity: 0; }
 .fr.flash { background: var(--sel); transition: background .2s; }
 .fr .tw { flex: none; width: 10px; color: var(--dim); font-size: 11px; }
 .fr .nm { overflow: hidden; text-overflow: ellipsis; }

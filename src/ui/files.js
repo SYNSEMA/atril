@@ -1,6 +1,7 @@
 // files.js — the panel on the right: the files of the space on screen, with what git says changed
 // (modified, new, deleted), a file read with its colors, and what changed in it (the diff since the
-// last commit). Read only. It asks the daemon of the space's machine every few seconds while it is
+// last commit). Read only: a file's path can be copied or dropped on a terminal, but moving, renaming
+// or deleting is the terminal's job (an agent may be writing that same file right then). It asks the daemon of the space's machine every few seconds while it is
 // open, so what an agent writes shows up by itself. Uses app.js: $, api, base, spaceOf, current, store.
 "use strict";
 
@@ -16,6 +17,7 @@ const FILES = {
   last: "",             // the last answer, to draw only when something changed
   busy: false,
   showChanges: store.get("filesChanges", true),
+  sel: null,            // the row the keys act on: the last one clicked, moved with the arrows
 };
 const openDirs = new Set();                        // folders open in the tree of FILES.sid
 let VIEW = null;                                   // the file on screen: {sid, path, mode: file | diff, stamp}
@@ -158,13 +160,15 @@ function paintFiles() {
       box.className = "flist";
       for (const p of paths.slice(0, 500)) {
         const r = document.createElement("div");
-        r.className = "fr file " + codeClass(ch[p]) + (VIEW && VIEW.path === p ? " on" : "");
+        r.className = "fr file " + codeClass(ch[p]) + (VIEW && VIEW.path === p ? " on" : "") + (FILES.sel === p ? " sel" : "");
+        r.dataset.path = p;
         r.title = `${p} · ${CODE_TEXT[ch[p]] || ch[p]}`;
         r.innerHTML = `<span class="nm"></span><span class="dn"></span><span class="gs"></span>`;
         r.querySelector(".nm").textContent = baseName(p);
         r.querySelector(".dn").textContent = dirName(p) === "." ? "" : dirName(p);
         r.querySelector(".gs").textContent = codeLetter(ch[p]);
-        r.onclick = () => openFile(p, "diff");
+        r.onclick = () => { FILES.sel = p; openFile(p, "diff"); };
+        rowExtras(r, { path: p, dir: false, code: ch[p] });
         box.append(r);
       }
       if (paths.length > 500) { const m = document.createElement("div"); m.className = "fr none"; m.textContent = `… y ${paths.length - 500} más`; box.append(m); }
@@ -194,7 +198,7 @@ function paintFiles() {
       const path = dir === "." ? e.name : dir + "/" + e.name;
       const r = document.createElement("div");
       const c = e.dir ? (changedDirs.has(path) ? "gM" : "") : codeClass(ch[path]);
-      r.className = "fr " + (e.dir ? "dir " : "file ") + c + (e.gone ? " gone" : "") + (VIEW && VIEW.path === path ? " on" : "");
+      r.className = "fr " + (e.dir ? "dir " : "file ") + c + (e.gone ? " gone" : "") + (VIEW && VIEW.path === path ? " on" : "") + (FILES.sel === path ? " sel" : "");
       r.style.paddingLeft = 8 + depth * 14 + "px";
       r.dataset.path = path;
       r.innerHTML = `<span class="tw"></span><span class="nm"></span><span class="gs"></span>`;
@@ -202,8 +206,9 @@ function paintFiles() {
       r.querySelector(".nm").textContent = e.name + (e.dir ? "/" : "");
       r.querySelector(".gs").textContent = e.dir ? "" : codeLetter(ch[path]);
       r.title = path + (ch[path] ? " · " + (CODE_TEXT[ch[path]] || ch[path]) : "") + (e.size != null && !e.dir ? " · " + fmtSize(e.size) : "");
-      if (e.dir) r.onclick = () => toggleDir(path);
-      else r.onclick = () => openFile(path, e.gone ? "diff" : "file");
+      if (e.dir) r.onclick = () => { FILES.sel = path; toggleDir(path); };
+      else r.onclick = () => { FILES.sel = path; openFile(path, e.gone ? "diff" : "file"); };
+      rowExtras(r, { path, dir: !!e.dir, gone: !!e.gone, code: ch[path] });
       tree.append(r);
       if (e.dir && openDirs.has(path)) {
         if (FILES.dirs[path]) draw(path, depth + 1);
@@ -223,6 +228,141 @@ function toggleDir(path) {
   paintFiles();
   if (openDirs.has(path) && !FILES.dirs[path]) filesRefresh(true);
 }
+
+// ---- a row's path: copied (as the file explorer does: Ctrl+Shift+C), or given to a terminal
+let FMENU = null;              // the row the menu was opened on: {sid, path, dir, gone, code}
+const FILE_DRAG = "application/x-atril-file";
+const winPath = (p) => /^[A-Za-z]:/.test(p) || p.includes("\\");
+// the path on its machine, with that machine's separators (a space on Windows: C:\…\src\app.js)
+function fullPath(sid, rel) {
+  const sp = spaceOf(sid);
+  if (!sp) return rel;
+  const win = winPath(sp.path);
+  return sp.path.replace(/[\\/]+$/, "") + (win ? "\\" : "/") + (win ? rel.replace(/\//g, "\\") : rel);
+}
+function relPath(sid, rel) { const sp = spaceOf(sid); return sp && winPath(sp.path) ? rel.replace(/\//g, "\\") : rel; }
+// a line at the bottom that goes away by itself: copying is not worth a dialog
+let toastTimer = 0;
+function toast(text) {
+  let t = $("#ftoast");
+  if (!t) { t = document.createElement("div"); t.id = "ftoast"; document.body.append(t); }
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), 1800);
+}
+function copyPath(text, what) {
+  navigator.clipboard.writeText(text).then(() => toast(what + ": " + text), () => notice("No se pudo copiar: " + text));
+}
+const quoted = (p) => (/[\s'"&()]/.test(p) ? `"${p}"` : p);
+// the path as the terminal on screen would use it: from the space's root when its program runs there,
+// whole otherwise (another folder, another space, another machine)
+function pathFor(key, sid, rel) {
+  const w = whereOf(key);
+  const sp = spaceOf(sid);
+  if (w && sp && w.sp.sid === sid && slashes(w.dir).toLowerCase() === slashes(sp.path).toLowerCase()) return relPath(sid, rel);
+  return fullPath(sid, rel);
+}
+function typePath(key, sid, rel) {
+  const t = terms.get(key);
+  if (!t) { notice("No hay una terminal en pantalla donde escribirla."); return; }
+  t.term.paste(quoted(pathFor(key, sid, rel)) + " ");
+  t.term.focus();
+}
+function fileMenuAction(a) {
+  const f = FMENU;
+  if (!f) return;
+  if (a === "open") { if (f.dir) toggleDir(f.path); else openFile(f.path, f.gone ? "diff" : "file", 0, f.sid); }
+  if (a === "diff") openFile(f.path, "diff", 0, f.sid);
+  if (a === "full") copyPath(fullPath(f.sid, f.path), "Ruta copiada");
+  if (a === "rel") copyPath(relPath(f.sid, f.path), "Ruta relativa copiada");
+  if (a === "name") copyPath(baseName(f.path), "Nombre copiado");
+  if (a === "term") typePath(activeKey(), f.sid, f.path);
+}
+function showFileMenu(f, x, y, sid = FILES.sid) {
+  FMENU = { sid, ...f };
+  only("file");   // app.js
+  const m = $("#ctx");
+  m.querySelector('[data-a="file-open"]').textContent = f.dir ? (openDirs.has(f.path) ? "Cerrar carpeta" : "Abrir carpeta") : "Abrir";
+  m.querySelector('[data-a="file-open"]').hidden = !!f.viewing;
+  m.querySelector('[data-a="file-diff"]').hidden = f.dir || !f.code;
+  m.querySelector('[data-a="file-term"]').hidden = !terms.get(activeKey());
+  place(m, x, y);   // app.js
+}
+// right click (or a long press on a phone) opens the menu; the row can be dragged onto a terminal
+function rowExtras(r, f) {
+  r.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); selectRow(r); showFileMenu(f, e.clientX, e.clientY); };
+  let press = 0;
+  r.addEventListener("touchstart", (e) => { const p = e.touches[0]; press = setTimeout(() => { selectRow(r); showFileMenu(f, p.clientX, p.clientY); }, 550); }, { passive: true });
+  for (const ev of ["touchend", "touchmove", "touchcancel"]) r.addEventListener(ev, () => clearTimeout(press), { passive: true });
+  if (f.gone) return;
+  r.draggable = true;
+  r.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData(FILE_DRAG, JSON.stringify({ sid: FILES.sid, path: f.path }));
+    e.dataTransfer.setData("text/plain", fullPath(FILES.sid, f.path));
+    e.dataTransfer.effectAllowed = "copy";
+  });
+}
+function selectRow(r) {
+  FILES.sel = r.dataset.path;
+  for (const x of document.querySelectorAll("#files .fr")) x.classList.toggle("sel", x.dataset.path === FILES.sel);
+}
+// a file of the panel dropped on a terminal: its path is typed there, as if pasted (called by app.js)
+function fileDrop(t, key) {
+  const has = (e) => e.dataTransfer && [...e.dataTransfer.types].includes(FILE_DRAG);
+  t.el.addEventListener("dragover", (e) => { if (!has(e)) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "copy"; t.el.classList.add("fdrop"); });
+  t.el.addEventListener("dragleave", () => t.el.classList.remove("fdrop"));
+  t.el.addEventListener("drop", (e) => {
+    t.el.classList.remove("fdrop");
+    if (!has(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    let f = null;
+    try { f = JSON.parse(e.dataTransfer.getData(FILE_DRAG)); } catch {}
+    if (f) typePath(key, f.sid, f.path);
+  });
+}
+// the keys of the tree and of the changes, as in a file explorer: arrows, Enter, the menu key, and the
+// paths (Ctrl+C with no text selected copies the whole path too)
+function treeKeys(e) {
+  const box = e.currentTarget;
+  const rows = [...box.querySelectorAll(".fr[data-path]")];
+  let i = rows.findIndex((r) => r.dataset.path === FILES.sel);
+  const r = rows[i];
+  const isDir = r && r.classList.contains("dir");
+  const k = e.key, c = e.code;
+  const copyKey = c === "KeyC" && e.ctrlKey && !e.altKey && (e.shiftKey || !String(getSelection()));
+  if (copyKey && r) copyPath(fullPath(FILES.sid, r.dataset.path), "Ruta copiada");
+  else if (c === "KeyC" && e.altKey && e.shiftKey && !e.ctrlKey && r) copyPath(relPath(FILES.sid, r.dataset.path), "Ruta relativa copiada");
+  else if (k === "ArrowDown" || k === "ArrowUp") {
+    i = Math.max(0, Math.min(rows.length - 1, i < 0 ? 0 : i + (k === "ArrowDown" ? 1 : -1)));
+    if (rows[i]) { selectRow(rows[i]); rows[i].scrollIntoView({ block: "nearest" }); }
+  } else if (k === "Enter" && r) r.click();
+  else if (k === "ArrowRight" && isDir && !openDirs.has(r.dataset.path)) toggleDir(r.dataset.path);
+  else if (k === "ArrowLeft" && r) {
+    if (isDir && openDirs.has(r.dataset.path)) toggleDir(r.dataset.path);
+    else if (dirName(r.dataset.path) !== ".") { FILES.sel = dirName(r.dataset.path); paintFiles(); }
+  } else if ((k === "ContextMenu" || (e.shiftKey && k === "F10")) && r) {
+    const b = r.getBoundingClientRect();
+    r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: b.left + 24, clientY: b.bottom }));
+  } else return;
+  e.preventDefault();
+}
+for (const id of ["#ftree", "#fchanges"]) { $(id).tabIndex = -1; $(id).addEventListener("keydown", treeKeys); }
+// in the viewer: the path of the file on screen, and Ctrl+A takes the file only, not the whole window
+$("#vbody").addEventListener("keydown", (e) => {
+  if (!VIEW) return;
+  if (e.code === "KeyC" && e.ctrlKey && e.shiftKey && !e.altKey) copyPath(fullPath(VIEW.sid, VIEW.path), "Ruta copiada");
+  else if (e.code === "KeyC" && e.altKey && e.shiftKey && !e.ctrlKey) copyPath(relPath(VIEW.sid, VIEW.path), "Ruta relativa copiada");
+  else if (e.code === "KeyA" && e.ctrlKey && !e.shiftKey && !e.altKey) getSelection().selectAllChildren($("#vbody"));
+  else return;
+  e.preventDefault();
+});
+$("#vpath").oncontextmenu = (e) => {
+  if (!VIEW) return;
+  e.preventDefault();
+  e.stopPropagation();
+  showFileMenu({ path: VIEW.path, dir: false, viewing: true, code: VIEW.sid === FILES.sid ? FILES.changes[VIEW.path] : undefined }, e.clientX, e.clientY, VIEW.sid);
+};
 
 // ---- the viewer: over the terminals, in the middle. One file open at a time; the ones you minimized
 // wait above the terminal (MINI), each with its place, until you open or drop them. Opening another
