@@ -161,12 +161,12 @@ the panel does not lose them (× next to a name forgets it). **cerrar** puts awa
 **◉ presentación**, at the bottom of the sidebar (or Ctrl+Shift+P), is for recording or sharing the
 screen: your user, your email, your machines and any word you add are covered with dots wherever the
 window shows them — in the terminals with dots of the same length, so an agent's screen keeps its
-layout, and in the viewer and the sidebar too. Programs and agents still see everything as it is; only
-what is drawn changes, and turning it on draws the open terminals again from their history (nothing
-needs closing). While it is on, a `.env` or a key asks before it opens and the phone's pairing QR stays
-blurred until clicked, and so does the relay's address beside it. It covers what it knows: for a
-tutorial, a demo folder without real secrets is still the safe way. Machines can also get a name of your
-own (right click → Ponerle un nombre…).
+layout, and in the viewer and the sidebar too, where process ids are covered as well. Programs and
+agents still see everything as it is; only what is drawn changes, and turning it on draws the open
+terminals again from their history (nothing needs closing). While it is on, a `.env` or a key asks
+before it opens and the phone's pairing QR stays blurred until clicked, and so does the relay's address
+beside it. It covers what it knows: for a tutorial, a demo folder without real secrets is still the safe
+way. Machines can also get a name of your own (right click → Ponerle un nombre…).
 
 **◐ tema**, at the bottom of the sidebar: dark, light, paper, high contrast, or yours, and either one
 always or one for the day and one for the night (by the system's setting or by the hour). A theme is a

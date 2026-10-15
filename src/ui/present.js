@@ -22,7 +22,14 @@ function buildMask() {
   MASK_MAX = ws.reduce((m, w) => Math.max(m, w.length), 0);
 }
 const dots = (m) => "•".repeat([...m].length);
-const maskText = (s) => (PRESENT.on && MASK_RE && s ? String(s).replace(MASK_RE, dots) : s);
+// the window's own "pid 1234" too (the sidebar, tooltips, dialogs): a number that says nothing outside,
+// but this mode promised a window without them
+const PID_RE = /\bpid (\d+)/g;
+const maskText = (s) => {
+  if (!PRESENT.on || !s) return s;
+  const v = String(s).replace(PID_RE, (m, n) => "pid " + dots(n));
+  return MASK_RE ? v.replace(MASK_RE, dots) : v;
+};
 
 // ---- the terminals: what a session prints goes through here before xterm draws it. The end of a
 // chunk that could be the beginning of a word waits for the next one (40 ms at most), so a word cut in
@@ -71,7 +78,7 @@ function redrawTerms() {
 // mode's own panel aside: those take care of themselves)
 const skipNode = (n) => { const el = n.nodeType === 1 ? n : n.parentElement; return !el || !!el.closest(".xterm, #present, script, style"); };
 function maskTree(root) {
-  if (!PRESENT.on || !MASK_RE || !root) return;
+  if (!PRESENT.on || !root) return;
   if (root.nodeType === 3) { if (!skipNode(root)) { const v = maskText(root.nodeValue); if (v !== root.nodeValue) root.nodeValue = v; } return; }
   if (root.nodeType !== 1 || skipNode(root)) return;
   // REJECT leaves out a terminal or the panel with all that is inside them
