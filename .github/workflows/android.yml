@@ -1,12 +1,12 @@
 # Builds Atril for Android (mobile/, Capacitor): the window of src/ui and src/app/remote.js inside the
 # app, signed with the upload key kept in this repository's secrets (ANDROID_KEYSTORE_B64,
 # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS). The .apk installs by hand; the .aab goes to Google Play.
-# On every push to phone that touches the app, and by hand from the Actions tab.
+# On every push to main that touches the app, and by hand from the Actions tab.
 name: android
 
 on:
   push:
-    branches: [phone]
+    branches: [main]
     paths: ["mobile/**", "src/ui/**", "src/app/**", ".github/workflows/android.yml"]
   workflow_dispatch:
 
