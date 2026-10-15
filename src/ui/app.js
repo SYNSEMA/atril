@@ -77,7 +77,8 @@ async function api(method, path, body) {
 function statusOf(s) {
   if (s.status === "exited") return "exited";
   if (s.bell) return "bell";
-  return s.activity || "idle";
+  // it ends up in a class inside innerHTML: only words this window knows, whatever a machine sends
+  return s.activity === "working" ? "working" : "idle";
 }
 const isAgent = (s) => s.kind !== "shell";
 const untitled = (s) => /^[a-z-]+-\d+$/.test(s.name);

@@ -76,11 +76,11 @@ export task device_id(public)
     give slice(b64(sha256(public)), 0, 12)
 
 -- what a phone may ask of this daemon through the link: the window's API, nothing else. Pairing and
--- the list of phones are managed only from this computer.
+-- the list of phones are managed only from this computer, here and on the machines it links (/api/m/<id>/…).
+-- The router reads "/api//remote" as "/api/remote", so the path is compared as the router reads it.
 export task allowed_path(p)
-    let path be split(text(p), "?")[0]
-    when not starts_with(path, "/api/")
+    let path be regex_replace(split(text(p), "?")[0], "/+", "/")
+    when not starts_with(path, "/api/") or contains(path, "..")
         give false
-    when starts_with(path, "/api/remote") or starts_with(path, "/api/source") or path == "/api/shutdown"
-        give false
-    give not contains(path, "..")
+    let own be regex_replace(path, "^/api/m/[^/]+/", "/api/")
+    give not regex_find_all(own, "^/api/(remote|source|shutdown)(/|$)")

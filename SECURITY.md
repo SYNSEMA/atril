@@ -11,6 +11,7 @@ your user on that machine. Atril is built around one question: **who can open a 
 | Another program on your machine calls the API | Every route except the static UI needs the **key** (32 random bytes, new at every start, in `~/.atril/daemon.json`) | no key → 401 |
 | A web page you visit talks to `127.0.0.1:7171` (CSRF, cross-site WebSocket hijacking) | `Origin` must be the daemon's own origin; the UI's cookie is `HttpOnly` + `SameSite=Strict` | `Origin: https://evil.com` with the right key → 401 |
 | DNS rebinding (`evil.com` resolving to 127.0.0.1) | `Host` must be `127.0.0.1:7171` or `localhost:7171` | `Host: evil.com:7171` → 401 |
+| A linked machine (a server someone broke into) sends a session whose fields carry HTML, to run code in this window | The window writes what machines send as text; the status that goes into a class is one of the words it knows | `activity: '"><img onerror=…>'` → `idle` |
 | A window sends something other than keys | The attach socket forwards only `{keys}` and `{resize}` (validated sizes); killing is a separate, authenticated route | a `{"t":"kill"}` sent over the socket is dropped |
 
 **Another person who also uses Atril** runs their own daemon on their own computer, with their own
@@ -19,7 +20,9 @@ neither knows the other exists. Two people on the **same** computer (two Windows
 127.0.0.1, but the key lives in each one's profile folder, which the other account cannot read.
 
 Known gaps, in order:
-- `~/.atril/daemon.json` relies on your home folder being private; on Linux/macOS it should be `chmod 600`.
+- `~/.atril/daemon.json` relies on your home folder being private. On Linux/macOS the daemon makes
+  `~/.atril` `700` and the file `600` at every start, so a service running as another user (on a
+  server, `/root` is often crossable) cannot read the key.
 - `atr open` passes the key in the URL fragment on the browser's command line, visible to other
   processes of the same user for a moment.
 - Any process running **as you** can read the key. Atril does not defend you from your own user;
@@ -64,7 +67,7 @@ Where the relay runs (ours at `atril.synsema.io`, or yours) decides availability
 | Someone who connects to the relay with the room of your daemon | The daemon talks only to a phone whose key it paired, or that brings a valid pairing code | an unpaired browser gets "not paired" and nothing else |
 | A stolen key, later, opens what was recorded before | Every connection adds two fresh ephemeral keys (forward secrecy) | — (by construction: DH(Ep, Ed) dies with the connection) |
 | A phone you lost | `atr devices rm <id>` on the computer: its connection is cut at once and it cannot come back | revoked in the end-to-end test: the next request fails, the phone stops retrying |
-| A paired phone pairs others, removes phones, stops the daemon, reads the sources | Those routes answer 403 to a phone; pairing is done only from the computer | 403 on `/api/remote/*`, `/api/shutdown`, `/api/source/*` from the phone |
+| A paired phone pairs others, removes phones, stops the daemon, reads the sources, here or on a machine this computer links | Those routes answer 403 to a phone, also written `/api//remote/…` (the router joins the slashes) and through `/api/m/<machine>/…`, where the mark of the phone goes along to that machine's daemon; pairing is done only from the computer | 403 on `/api/remote/*`, `/api/shutdown`, `/api/source/*` from the phone |
 | The page the phone runs is changed on the way | The app is served from its own origin (`app.atril.synsema.io`, static files built from this repository by `src/app/build.sh`), never by the relay: breaking into the relay does not change the code that holds the keys | — |
 | Moving the phones to another relay | Only the computer chooses the relay (`/api/remote/relay` answers 403 to a phone); the phones connected at that moment learn the new address inside a sealed record, so a relay cannot send them elsewhere | moved to a local relay and back in the end-to-end test: the phone followed both times |
 

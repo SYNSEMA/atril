@@ -93,6 +93,11 @@ when OTHER != nothing
     exit(0)
 
 write_file("~/.atril/daemon.json", json_encode({"port": PORT, "token": TOKEN, "machine": MACHINE}))
+-- the key opens a shell as this user: only this user reads it (on a server, a service running as
+-- another user would otherwise find it in a home folder others can cross)
+when platform()["os"] != "windows"
+    run("chmod", ["700", replace(HOME, "\\", "/") + "/.atril"])
+    run("chmod", ["600", replace(HOME, "\\", "/") + "/.atril/daemon.json"])
 
 -- the shell a new tab opens when nothing else is asked for
 task default_shell()
@@ -1113,11 +1118,19 @@ task connect_flow(sock, req)
     bus_publish("machines", {"id": mid})
     give {"ok": true, "id": mid, "name": name}
 
+-- what goes with a request to a remote daemon: its key, and the mark of a phone when a phone asks, so
+-- that daemon keeps a phone out of what only the computer does (pairing, the relay, shutting it down)
+task remote_headers(key, phone)
+    let h be {"Authorization": "Bearer " + key}
+    when phone != nothing
+        set h["X-Atril-Remote"] to text(phone)
+    give h
+
 -- a window's socket to a remote daemon's socket, both ways, until either closes
-task pipe_ws(sock, url, key)
+task pipe_ws(sock, url, key, phone)
     let up be nothing
     try
-        set up to ws_connect(url, {"Authorization": "Bearer " + key}, {"timeout": 10})
+        set up to ws_connect(url, remote_headers(key, phone), {"timeout": 10})
     recover e
         give nothing
     while true
@@ -1133,11 +1146,11 @@ task pipe_ws(sock, url, key)
                 ws_send(sock, ev["data"])
 
 -- a request of the window to a remote daemon, answered as that daemon answered it
-task proxy_http(mid, method, rest, q, body)
+task proxy_http(mid, method, rest, q, body, phone)
     let r be remote_of(mid)
     when r == nothing
         give fail(503, "that machine is not connected right now")
-    let h be {"Authorization": "Bearer " + r["key"], "Content-Type": "application/json"}
+    let h be merge(remote_headers(r["key"], phone), {"Content-Type": "application/json"})
     let url be r["base"] + "/api/" + rest
     let res be nothing
     when method == "GET"
@@ -2112,6 +2125,8 @@ serve on 7171
 
     -- `atr down`: every session ends with the daemon
     route "POST /api/shutdown" requires auth
+        when get(request.headers, "x-atril-remote") != nothing
+            give fail(403, "the daemon is stopped from the computer")
         shutdown("atr down")
         give {"ok": true}
 
@@ -2285,23 +2300,23 @@ serve on 7171
         socket
             let r be remote_of(params.mid)
             when r != nothing
-                pipe_ws(socket, r["ws"] + "/api/events", r["key"])
+                pipe_ws(socket, r["ws"] + "/api/events", r["key"], get(request.headers, "x-atril-remote"))
 
     route "GET /api/m/:mid/sessions/:ref/attach" requires auth
         timeout none
         socket
             let r be remote_of(params.mid)
             when r != nothing
-                pipe_ws(socket, r["ws"] + "/api/sessions/" + params.ref + "/attach", r["key"])
+                pipe_ws(socket, r["ws"] + "/api/sessions/" + params.ref + "/attach", r["key"], get(request.headers, "x-atril-remote"))
 
     route "GET /api/m/:mid/*rest" requires auth
-        give proxy_http(params.mid, "GET", params.rest, query, nothing)
+        give proxy_http(params.mid, "GET", params.rest, query, nothing, get(request.headers, "x-atril-remote"))
 
     route "POST /api/m/:mid/*rest" requires auth
-        give proxy_http(params.mid, "POST", params.rest, nothing, read_body())
+        give proxy_http(params.mid, "POST", params.rest, nothing, read_body(), get(request.headers, "x-atril-remote"))
 
     route "DELETE /api/m/:mid/*rest" requires auth
-        give proxy_http(params.mid, "DELETE", params.rest, nothing, nothing)
+        give proxy_http(params.mid, "DELETE", params.rest, nothing, nothing, get(request.headers, "x-atril-remote"))
 
     -- the sources, for a machine installing Atril through `ssh -R` (see install_remote): only with the
     -- key of an install in progress, only from this machine's loopback, only the files in SOURCES
@@ -2369,6 +2384,9 @@ serve on 7171
     route "GET /api/remote/setup" requires auth
         timeout none
         socket
+            when get(request.headers, "x-atril-remote") != nothing
+                ws_close(socket)
+                stop
             let first be ws_recv(socket, 120)
             let req be when first == nothing or first["type"] != "text" then nothing otherwise json_decode(first["data"], nothing)
             let result be {"error": "nothing to set up"}
