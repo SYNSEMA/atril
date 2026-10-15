@@ -40,11 +40,26 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 /* the phone's status bar and gesture bar: the app draws behind them (Android 15+), so it starts below
    and ends above, and the strips take the theme's background. In the Android app Capacitor gives the
    sizes as --safe-area-inset-*; a browser gives env(); a computer, 0 */
+/* the shape of the window, which a theme can change too (themes/README.md, «forma»): these defaults are
+   Atril's flat look; neon.json floats the sidebar and the terminals as rounded windows with gaps and a
+   glowing edge on the one in focus, as a tiling Linux desktop (Hyprland) does */
+:root {
+  --gap: 0px;                      /* around the sidebar and the terminal */
+  --radius: 0px;                   /* their corners, and the board's panes */
+  --edge: 0px;                     /* their edge; the one in focus is painted with focus-edge */
+  --edge-color: var(--line);
+  --focus-edge: var(--accent);     /* a color or a gradient */
+  --glow: none;                    /* a box-shadow around the one in focus */
+  --side-edge: 0 1px 0 0;          /* the sidebar's border widths */
+  --tab-radius: 0px; --tab-margin: 0px; --tab-sep: 1px solid var(--line);
+  --accent-fill: var(--accent);    /* the tab on screen: a color or a gradient */
+  --pane-gap: 1px; --board-pad: 0px; --board-bg: var(--line);
+}
 :root { --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)); --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)); }
 #app { display: flex; height: 100dvh; box-sizing: border-box; padding-top: var(--sat); padding-bottom: var(--sab); }
 
 /* sidebar */
-#side { width: 280px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 14px 10px; gap: 6px; position: relative; }
+#side { width: 280px; flex: none; background: var(--panel); border-style: solid; border-color: var(--edge-color); border-width: var(--side-edge); display: flex; flex-direction: column; padding: 14px 10px; gap: 6px; position: relative; }
 #side.collapsed { width: 0; padding: 0; overflow: hidden; border: 0; }
 .brand { font-weight: 700; padding: 0 8px 10px; letter-spacing: .5px; }
 .brand .ext { color: var(--muted); font-weight: 400; }
@@ -93,7 +108,9 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #spaces li.more .st { margin-left: -16px; }
 #spaces { overflow-y: auto; max-height: 45%; }
 #agents .none { color: var(--dim); font-size: 12px; cursor: default; display: block; }
-#agents { overflow-y: auto; flex: 1; padding-bottom: 30px; }
+/* the list ends above «tema · presentación · «», which sit in the bottom of the sidebar: a margin and
+   not a padding, so what scrolls never passes behind them */
+#agents { overflow-y: auto; flex: 1; min-height: 0; margin-bottom: 22px; padding-bottom: 4px; }
 #agents li { padding: 6px 8px; border-radius: 3px; cursor: pointer; display: grid; grid-template-columns: 14px 1fr auto; gap: 0 6px; align-items: baseline; }
 #agents li:hover { background: var(--hover); }
 #agents li.open { background: var(--sel); }
@@ -118,9 +135,9 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #tabs { display: flex; align-items: stretch; height: 30px; background: var(--bg); border-bottom: 1px solid var(--line); padding: 0 6px; }
 #tablist { display: flex; overflow-x: auto; scrollbar-width: none; }
-.tab { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; color: var(--muted); border-right: 1px solid var(--line); white-space: nowrap; max-width: 220px; }
+.tab { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; color: var(--muted); border-right: var(--tab-sep); border-radius: var(--tab-radius); margin: var(--tab-margin); white-space: nowrap; max-width: 220px; }
 .tab .t { overflow: hidden; text-overflow: ellipsis; }
-.tab.on { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+.tab.on { background: var(--accent-fill); color: var(--on-accent); font-weight: 700; }
 .tab .x { opacity: .5; padding: 0 2px; }
 .tab .x:hover { opacity: 1; }
 #menu, #expand { padding: 0 12px; color: var(--muted); font-size: 16px; }
@@ -128,7 +145,10 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 #plus { margin: 4px 6px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; display: flex; align-items: center; justify-content: center; line-height: 1; }
 #plus span { font-size: 15px; font-weight: 700; }
 #plus:hover { background: var(--accent); color: var(--on-accent); }
-#stage { flex: 1; position: relative; min-height: 0; overflow: hidden; }
+#stage { flex: 1; position: relative; min-height: 0; overflow: hidden; margin: var(--gap); border: var(--edge) solid transparent; border-radius: var(--radius);
+  background: linear-gradient(var(--bg), var(--bg)) padding-box, var(--focus-edge) border-box; box-shadow: var(--glow); }
+/* on the board each pane is a window of its own: the stage only holds them */
+.boarding #stage { border-color: transparent; background: none; box-shadow: none; }
 /* content-box: xterm's fit reads the height of this box and does not take its padding off; with the
    border-box of everything else it counted the padding as room for rows, and the last row was cut */
 .term { position: absolute; inset: 0; padding: 6px 0 4px 8px; box-sizing: content-box; }
@@ -374,6 +394,11 @@ b.ok { color: var(--ok); }
    that lays itself out by width, like OpenCode, does not change), or docked beside it */
 #app { position: relative; }
 #files.float { position: absolute; right: 0; top: 31px; bottom: 0; z-index: 6; box-shadow: -8px 0 24px var(--shade); }
+/* with a theme that has gaps (neon) the files panel is one more window: floating or docked */
+@media (min-width: 721px) {
+  #files { margin: var(--gap) var(--gap) var(--gap) 0; border-radius: var(--radius); overflow: hidden; }
+  #files.float { margin: 0; top: calc(31px + var(--gap)); right: var(--gap); bottom: var(--gap); }
+}
 .fh #fpin { font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 7px; }
 .fh #fpin:hover { border-color: var(--muted); }
 
@@ -504,7 +529,7 @@ b.ok { color: var(--ok); }
 .boardrow.on .lay { color: var(--accent); }
 .boardrow.drop, .dragging .boardrow { border-style: dashed; border-color: var(--accent); color: var(--accent); }
 .lay { flex: none; }
-#board { position: absolute; inset: 0; display: grid; gap: 1px; background: var(--line); }
+#board { position: absolute; inset: 0; display: grid; gap: var(--pane-gap); padding: var(--board-pad); background: var(--board-bg); }
 #board.n0 { display: grid; place-content: center; background: var(--bg); }
 #board.n1 { grid-template: "p0" 1fr / 1fr; }
 #board.n2 { grid-template: "p0 p1" 1fr / 1fr 1fr; }
@@ -513,7 +538,9 @@ b.ok { color: var(--ok); }
 #bempty { text-align: center; padding: 0 16px; line-height: 1.5; }
 #bempty .lay { width: 48px; height: 42px; color: var(--accent); }
 #bempty p { margin: 6px 0; }
-.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border: var(--edge) solid transparent; border-radius: var(--radius);
+  background: linear-gradient(var(--bg), var(--bg)) padding-box, var(--edge-color) border-box; }
+.pane.focus { background: linear-gradient(var(--bg), var(--bg)) padding-box, var(--focus-edge) border-box; box-shadow: var(--glow); }
 .pane .bh { flex: none; display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 4px 0 10px; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; cursor: grab; user-select: none; }
 .pane.focus .bh { color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
 .pane .bdev { flex: none; color: var(--dim); }
@@ -567,6 +594,10 @@ b.ok { color: var(--ok); }
   #boardclose .lbl { display: none; }
   #tablist { min-width: 0; }
 }
+
+/* a phone: no gaps around the sidebar (it slides over everything) nor around the terminal (no room) */
+@media (max-width: 720px) { #side { margin: 0 !important; border-radius: 0; } #stage { margin: 0; border-radius: 0; border-width: 0; } }
+@media (min-width: 721px) { #side { margin: var(--gap) 0 var(--gap) var(--gap); border-radius: var(--radius); } #side.collapsed { margin: 0; } }
 
 /* on a phone: pairing and connecting machines are done from the computer */
 .atril-phone #adddev { display: none; }

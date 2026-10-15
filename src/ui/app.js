@@ -13,6 +13,9 @@
 const $ = (s) => document.querySelector(s);
 const WS = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 const LOCAL = "local";
+// the window's title, the same in every space and on the board: the bar of the window and the taskbar say it
+const APP_TITLE = "Atril · gestioná todos tus agentes y dispositivos en un mismo lugar";
+document.title = APP_TITLE;
 
 // machines: this one first, then the connected ones. {mid, name, status, error, target}
 let machines = [{ mid: LOCAL, name: "", status: "up" }];
@@ -408,8 +411,6 @@ function renderTabs() {
   const sp = spaceOf(current);
   $("#empty").hidden = list.length > 0;
   $("#empty-title").textContent = sp ? `${sp.name} no tiene terminales abiertas.` : "Creá un space con new.";
-  const mm = sp && machineOf(sp.mid);
-  document.title = "Atril · " + (sp ? sp.name + (sp.mid !== LOCAL && mm ? " · " + mm.name : "") : machines[0].name);
   if (typeof filesSync === "function") filesSync();   // the panel of files follows the space on screen
 }
 

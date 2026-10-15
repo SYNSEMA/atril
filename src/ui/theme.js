@@ -9,7 +9,7 @@
 // Loaded in <head>, before the page is drawn; app.js calls initThemes() once it is logged in.
 "use strict";
 
-const BUILTIN = ["oscuro", "claro", "papel", "contraste"];
+const BUILTIN = ["oscuro", "neon", "claro", "papel", "contraste"];
 const THEMES = {};                                 // id -> theme, as its JSON says
 const themeStore = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
@@ -22,9 +22,14 @@ let themeNow = themeStore.get("atril.themeApplied", null);   // {id, kind, ui, t
 // a value goes into a CSS custom property: no url() (a theme is colors), no way out of the declaration
 const safeValue = (v) => typeof v === "string" && v.length < 200 && !/url\(|[;{}<>]/i.test(v);
 
+// what the theme before set and this one does not say goes back to app.css's default (a gap of the
+// neon theme must not stay when you choose another)
+let themeKeys = [];
 function applyResolved(t) {
   const root = document.documentElement;
-  for (const [k, v] of Object.entries(t.ui || {})) if (/^[a-z0-9-]+$/.test(k) && safeValue(v)) root.style.setProperty("--" + k, v);
+  for (const k of themeKeys) root.style.removeProperty("--" + k);
+  themeKeys = [];
+  for (const [k, v] of Object.entries(t.ui || {})) if (/^[a-z0-9-]+$/.test(k) && safeValue(v)) { root.style.setProperty("--" + k, v); themeKeys.push(k); }
   root.style.colorScheme = t.kind === "light" ? "light" : "dark";
   root.dataset.kind = t.kind === "light" ? "light" : "dark";
   const meta = document.querySelector('meta[name="theme-color"]');

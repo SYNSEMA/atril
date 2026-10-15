@@ -36,6 +36,24 @@ A theme only needs what it changes. The rest comes from Atril's theme of the sam
 | `plus-bg`, `plus-text`, `minus-bg`, `minus-text`, `hunk-bg` | a diff: added lines, removed lines, the `@@` lines |
 | `shade` | behind a dialog and under floating panels |
 
+### `ui`: the shape («forma»)
+
+Besides colors, a theme can change the shape of the window. Atril's own themes are flat; `neon.json`
+floats the sidebar and the terminals as rounded windows with gaps between them and a glowing edge on
+the one in focus, as a tiling Linux desktop does. Copy its values to start.
+
+| key | default | what it is |
+|---|---|---|
+| `gap` | `0px` | the space around the sidebar and the terminal |
+| `radius` | `0px` | their corners, and those of the board's panes |
+| `edge`, `edge-color` | `0px`, `line` | the edge of the terminal and of each pane |
+| `focus-edge` | `accent` | the edge of the one in focus: a color or a `linear-gradient(…)` |
+| `glow` | `none` | a `box-shadow` around the one in focus |
+| `side-edge` | `0 1px 0 0` | the sidebar's border widths (top right bottom left) |
+| `tab-radius`, `tab-margin`, `tab-sep` | `0px`, `0px`, `1px solid line` | the tabs: corners, space around, line between |
+| `accent-fill` | `accent` | the tab on screen: a color or a gradient |
+| `pane-gap`, `board-pad`, `board-bg` | `1px`, `0px`, `line` | the board: between panes, around them, behind them |
+
 ### `terminal`
 
 `background`, `foreground`, `cursor`, `cursorAccent`, the 16 colors (`black` … `white`,

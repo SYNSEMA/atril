@@ -50,7 +50,7 @@ use "./qr.syn" as qr
 
 let BASE be "http://127.0.0.1:7171"
 let WIN be platform()["os"] == "windows"
-let VERSION be "0.3.7"
+let VERSION be "0.3.8"
 
 task say(t)
     print(t)

@@ -47,7 +47,7 @@ use "./remote.syn" as remote
 use "./qr.syn" as qr
 
 let PORT be 7171
-let VERSION be "0.3.7"
+let VERSION be "0.3.8"
 let TOKEN be token(32)
 let KEEP be 524288          -- characters of scrollback each session keeps for a window that attaches
 -- the name of this computer: Windows says it in COMPUTERNAME; on Linux a daemon started over SSH may
@@ -1001,7 +1001,7 @@ task password_once(sock, m, pub)
 -- its official installer when the machine has none. Then the machine runs install.sh, as a person would.
 
 let SOURCES be ["atrild.syn", "atr.syn", "window.syn", "remote.syn", "qr.syn", "relay.syn", "install.sh", "ui/index.html", "ui/app.js", "ui/files.js", "ui/board.js", "ui/present.js", "ui/star.js", "ui/theme.js", "ui/app.css",
-    "ui/themes/oscuro.json", "ui/themes/claro.json", "ui/themes/papel.json", "ui/themes/contraste.json", "ui/icon.svg",
+    "ui/themes/oscuro.json", "ui/themes/neon.json", "ui/themes/claro.json", "ui/themes/papel.json", "ui/themes/contraste.json", "ui/icon.svg",
     "ui/vendor/xterm.min.js", "ui/vendor/xterm.css", "ui/vendor/addon-fit.min.js", "ui/vendor/highlight.min.js",
     "ui/vendor/marked.min.js", "ui/vendor/purify.min.js"]
 

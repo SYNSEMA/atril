@@ -79,7 +79,6 @@ function renderBoard() {
   });
   $("#bempty").hidden = BOARD.keys.length > 0;
   paintBar();
-  document.title = "Atril · tablero";
 }
 
 // a terminal that ended and was removed, or whose machine you disconnected, leaves the board; one on a
