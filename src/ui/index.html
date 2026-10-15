@@ -17,7 +17,7 @@
     <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
 
     <button id="find" class="search" title="Buscar cualquier sesión, en cualquier dispositivo">⌕ buscar sesiones… <kbd>Ctrl+Shift+K</kbd></button>
-    <button id="boardbtn" class="boardrow"></button>
+    <button id="boardbtn" class="boardrow" hidden></button>
 
     <div class="label">dispositivos</div>
     <ul id="devices"></ul>
@@ -37,7 +37,7 @@
   </aside>
 
   <main id="main">
-    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><button id="boardx" hidden title="Volver a los spaces: el tablero queda armado para la próxima">salir<span class="lbl"> del tablero</span></button><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span><span class="lbl"> terminal</span></button><span id="vchips"></span><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><button id="boardx" hidden title="Volver a los spaces: el tablero queda armado para la próxima (Ctrl+Shift+D)">salir</button><button id="boardclose" hidden title="Cerrar el tablero: las terminales siguen corriendo, cada una como pestaña de su space">cerrar<span class="lbl"> tablero</span></button><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span><span class="lbl"> terminal</span></button><span id="vchips"></span><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
         <p id="empty-title">Este space no tiene terminales.</p>

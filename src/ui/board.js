@@ -10,10 +10,14 @@
 // pane, leaving moves it back to #stage. Nothing here starts or ends a program except boardNew, which
 // opens a terminal: taking one off the board leaves it running, as a tab of its space.
 //
-// How you get here: hold a tab still (it comes off the bar), drag a tab, a space or an agent onto the
-// terminal or onto «tablero» in the sidebar, right click → «Llevar al tablero», or «tablero» itself.
-// How you leave: «salir del tablero», ↗ on a pane (to its space), or choosing a space or an agent
-// that is not on the board. The board stays as it was for the next time (localStorage).
+// Atril is space mode first: the board stays out of sight until you ask for it. «tablero» in the
+// sidebar shows only while the board has terminals (or is on screen), and going from a space into the
+// board asks once what it is (boardAsk: every way in goes through it, until «no volver a preguntar»).
+// How you get here: hold a tab still (it comes off the bar), Ctrl+Shift+D, drag a tab, a space or an
+// agent onto the terminal, right click → «Llevar al tablero», or «tablero» once there is a board.
+// How you leave: «salir» (the board stays as it was for the next time, in localStorage), «cerrar
+// tablero» (emptied), Ctrl+Shift+D, ↗ on a pane (to its space), or choosing a space or an agent that
+// is not on the board. A board of one terminal or none is not kept: it is only a tab (leaveBoard).
 //
 // What app.js calls here (keep these names): BOARD, BOARD_MAX, renderBoard, paintBoardBtn,
 // enterBoard, leaveBoard, boardFocus, boardAdd, boardAddSpace, boardNew, boardNewHere, boardRemove,
@@ -179,6 +183,7 @@ function paintBar() {
     : "Sumar al tablero una terminal que ya corre, o una nueva en cualquier space y dispositivo (Ctrl+Shift+T: una nueva junto a la que tenés en foco)";
   plus.classList.toggle("full", BOARD.keys.length >= BOARD_MAX);
   $("#boardx").hidden = false;
+  $("#boardclose").hidden = false;
 }
 
 // the board's terminals in a list under its title: the one chosen comes to the front (on a phone, where
@@ -209,10 +214,11 @@ document.addEventListener("click", (e) => { if (!e.target.closest("#bmenu")) $("
 function paintBoardBtn() {
   const b = $("#boardbtn");
   const n = BOARD.keys.length;
+  b.hidden = !BOARD.on && !n;   // no board, no button: Atril looks as it always did
   b.classList.toggle("on", BOARD.on);
   b.innerHTML = `${layoutIcon(n)}<span>tablero</span><span class="muted">${n ? n + "/" + BOARD_MAX : ""}</span>`;
   b.title = BOARD.on ? "Volver a los spaces (el tablero queda armado)"
-    : `Varias terminales a la vez, de distintos spaces y dispositivos (hasta ${BOARD_MAX}).\nTambién: mantené apretada una pestaña, o arrastrá una pestaña, un space o un agent hasta acá.`;
+    : `Volver al tablero (Ctrl+Shift+D): varias terminales a la vez, de distintos spaces y dispositivos (hasta ${BOARD_MAX}).`;
 }
 
 // ---- in and out
@@ -232,10 +238,12 @@ function enterBoard(focus) {
 function leaveBoard() {
   if (!BOARD.on) return;
   BOARD.on = false;
+  if (BOARD.keys.length <= 1) BOARD.keys = [];   // one terminal is a tab, not a board: nothing to come back to
   boardSave();
   for (const k of [...panes.keys()]) unpane(k);
   $("#board").hidden = true;
   $("#boardx").hidden = true;
+  $("#boardclose").hidden = true;
   $("#bmenu").hidden = true;
   $("#app").classList.remove("boarding");
   $("#plus").querySelector(".lbl").textContent = " terminal";
@@ -249,7 +257,16 @@ function exitBoard() {
   if (k && sessions.has(k)) reveal(k);
   else selectSpace(current);
 }
+// «cerrar tablero»: emptied and out; its terminals keep running, each one a tab of its space
+function closeBoard() {
+  const k = BOARD.focus;
+  BOARD.keys = [];
+  leaveBoard();
+  if (k && sessions.has(k)) reveal(k);
+  else selectSpace(current);
+}
 $("#boardx").onclick = exitBoard;
+$("#boardclose").onclick = closeBoard;
 $("#boardbtn").onclick = () => { if (BOARD.on) exitBoard(); else enterBoard(); };
 
 // ---- the board's terminals
@@ -273,10 +290,36 @@ function boardFull() {
   notice(`El tablero ya tiene ${BOARD_MAX} terminales. Sacá una (× en su barra) para sumar otra, o soltá la nueva encima de la que querés cambiar.`);
   if (!BOARD.on) enterBoard();
 }
+// from a space into the board: the first time, a word on what it is and a way back out. Gives whether
+// to go on. A function that already asked passes asked = true to the next one, so one gesture asks once
+async function boardAsk(asked = false) {
+  if (asked || BOARD.on || store.get("boardAsked", false)) return true;
+  const go = ask(`¿Armar un tablero con esta terminal?
+Varias terminales a la vez (hasta ${BOARD_MAX}), de distintos spaces y dispositivos. Ningún space queda seleccionado; los programas siguen corriendo como siempre.
+Para volver: «salir del tablero» o Ctrl+Shift+D.`,
+    [{ label: "Cancelar", value: false }, { label: "Armar tablero", value: true, kind: "primary" }]);
+  // ask() draws the text before it waits: the box below it is this dialog's own
+  const box = document.createElement("label");
+  box.className = "dcheck";
+  box.innerHTML = `<input type="checkbox" checked> no volver a preguntar`;
+  $("#dtext").append(box);
+  const yes = await go;
+  if (yes && box.querySelector("input").checked) store.set("boardAsked", true);
+  return !!yes;
+}
+// Ctrl+Shift+D: into the board with the tab on screen (or the board as it was), and out again
+async function boardToggle() {
+  if (BOARD.on) return exitBoard();
+  const k = BOARD.keys.length ? null : lastTab[current];
+  if (!BOARD.keys.length && !k) return notice("Abrí una terminal primero: el tablero empieza con ella.");
+  if (!(await boardAsk())) return;
+  if (k) boardPlace(k, null, true); else enterBoard();
+}
 // a terminal onto the board, in place at (a pane's index: when the board is full it takes that pane's
 // place) or after the last; one already there moves to at
-function boardPlace(key, at = null) {
+async function boardPlace(key, at = null, asked = false) {
   if (!sessions.has(key)) return;
+  if (!(await boardAsk(asked))) return;
   const ks = BOARD.keys;
   const i = ks.indexOf(key);
   if (i >= 0) { if (at != null && at < ks.length && at !== i) [ks[i], ks[at]] = [ks[at], ks[i]]; }
@@ -292,6 +335,8 @@ function boardRemove(key) {
   BOARD.keys.splice(i, 1);
   if (BOARD.focus === key) BOARD.focus = BOARD.keys[Math.min(i, BOARD.keys.length - 1)] || null;
   boardSave();
+  // the last one off: the board closes, back to the space of the terminal just taken off
+  if (BOARD.on && !BOARD.keys.length) { leaveBoard(); if (sessions.has(key) && !hidden.has(key)) reveal(key); else selectSpace(current); return; }
   renderSide();
   const t = terms.get(BOARD.focus);
   if (BOARD.on && t) requestAnimationFrame(() => t.term.focus());
@@ -306,9 +351,9 @@ function boardReplace(old, key, at) {
   renderSide();
 }
 // a new terminal in a space of any device, straight onto the board
-async function boardNew(sp, at = null) {
+async function boardNew(sp, at = null, asked = false) {
   if (BOARD.keys.length >= BOARD_MAX && at == null) return boardFull();
-  boardPlace(await newTab({ cwd: sp.path }, sp.mid, false), at);
+  boardPlace(await newTab({ cwd: sp.path }, sp.mid, false), at, asked);
 }
 // Ctrl+Shift+T on the board: a new terminal beside the focused one, in its space; else choose where
 function boardNewHere() {
@@ -319,11 +364,11 @@ function boardNewHere() {
 }
 // a space onto the board: the terminal it showed last that is not there yet, else a new one
 async function boardAddSpace(sp, at = null) {
-  if (!sp) return;
+  if (!sp || !(await boardAsk())) return;
   const open = tabsOf(sp.sid).filter((s) => !BOARD.keys.includes(s.key));
   const s = open.find((x) => x.key === lastTab[sp.sid]) || open[open.length - 1];
-  if (s) return boardPlace(s.key, at);
-  return boardNew(sp, at);
+  if (s) return boardPlace(s.key, at, true);
+  return boardNew(sp, at, true);
 }
 
 // ---- dragging: a tab, an agent, a space (into the board) or a pane's bar (to another place in it)
@@ -394,7 +439,8 @@ async function dropped(e, at) {
 // first is a click; the click that ends the hold does not also choose the tab under it
 const HOLD_MS = 450;
 let hold = null;     // {el, key, x, y, timer}
-let heldAt = 0;
+let held = false;    // a hold fired and its pointer is still down
+let releasedAt = 0;  // when the pointer of a hold that fired was let go
 function boardHold(el, key) {
   el.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || e.target.closest("button, input")) return;
@@ -403,7 +449,7 @@ function boardHold(el, key) {
     hold = { el, key, x: e.clientX, y: e.clientY, timer: setTimeout(() => {
       const h = hold;
       hold = null;
-      heldAt = Date.now();
+      held = true;
       h.el.classList.remove("holding");
       h.el.classList.add("lift");
       setTimeout(() => boardAdd(h.key), 160);
@@ -416,20 +462,24 @@ function cancelHold() {
   hold.el.classList.remove("holding");
   hold = null;
 }
-window.addEventListener("pointerup", cancelHold, true);
-window.addEventListener("pointercancel", cancelHold, true);
+for (const type of ["pointerup", "pointercancel"]) {
+  window.addEventListener(type, () => { cancelHold(); if (held) { held = false; releasedAt = Date.now(); } }, true);
+}
 window.addEventListener("pointermove", (e) => {
   if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 6) cancelHold();
   // no pointer moves while something is dragged: one that moves means a drag ended without a drop
   // here (Esc, or its tab redrawn under it, which loses its dragend)
   if (document.documentElement.classList.contains("dragging")) dropDone();
 }, true);
-for (const type of ["click", "contextmenu"]) {
-  document.addEventListener(type, (e) => { if (Date.now() - heldAt < 900) { e.stopPropagation(); e.preventDefault(); } }, true);
-}
+// what the hold itself sets off is swallowed: the menu a phone opens on a long press (while held, or as
+// it is let go) and the click of letting go, which comes right after its pointerup. Not a later click:
+// that one may be on the board's question, which shows up while the tab is still held
+const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+document.addEventListener("contextmenu", (e) => { if (held || Date.now() - releasedAt < 300) swallow(e); }, true);
+document.addEventListener("click", (e) => { if (Date.now() - releasedAt < 300) { releasedAt = 0; swallow(e); } }, true);
 
 // the empty board says how to fill it
 $("#bempty").innerHTML = `<div>${layoutIcon(4)}<p><b>El tablero está vacío.</b></p>
   <p class="muted">Hasta ${BOARD_MAX} terminales a la vez, de cualquier space y de cualquier dispositivo.</p>
   <p class="muted">Arrastrá hasta acá una pestaña, un space o un agent, o usá <b>+ agregar</b>.<br>
-  Desde un space: mantené apretada una pestaña, o clic derecho → Llevar al tablero.</p></div>`;
+  Desde un space: mantené apretada una pestaña, Ctrl+Shift+D, o clic derecho → Llevar al tablero.</p></div>`;

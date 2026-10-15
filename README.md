@@ -86,8 +86,11 @@ atr devices                    # the paired phones; `atr devices rm <id>` cuts o
 ```
 
 **The board (tablero)**: up to four terminals on screen at once, from different spaces and different
-devices. Hold a tab still (it comes off the bar), drag a tab, a space or an agent onto the terminal,
-or right click → **Llevar al tablero**; **▦ tablero** in the sidebar goes in and out. Two side by
+devices. It stays out of sight until you ask for it: hold a tab still (it comes off the bar), press
+**Ctrl+Shift+D**, drag a tab, a space or an agent onto the terminal, or right click → **Llevar al
+tablero**; the first time it asks. Ctrl+Shift+D also leaves it, and **▦ tablero** shows in the sidebar
+only while the board has terminals. **cerrar tablero** empties it, and a board left with one terminal
+or none closes by itself (one terminal is just a tab). Two side by
 side, three with the third along the bottom, four in a square; drag a pane's bar onto another to swap
 them, and **+ agregar** adds one that runs or a new one in any space of any machine. On the board no
 space is selected; taking a terminal off (×) leaves it running as a tab of its space. On a phone the

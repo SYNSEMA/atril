@@ -396,7 +396,7 @@ function renderTabs() {
     const x = el.querySelector(".x");
     x.textContent = "×";
     x.title = s.status === "running" ? "Cerrar pestaña (el programa sigue: está en agents / find)" : "Cerrar y olvidar";
-    el.title = tooltip(s) + "\n(doble clic para ponerle título · mantené apretado para llevarla al tablero)";
+    el.title = tooltip(s) + "\n(doble clic para ponerle título · mantené apretado para llevarla al tablero, o Ctrl+Shift+D)";
     el.onclick = (e) => { if (e.target !== x && e.target.tagName !== "INPUT") focusTab(s.key); };
     x.onclick = () => closeTab(s.key);
     el.onauxclick = (e) => { if (e.button === 1) closeTab(s.key); };
@@ -1444,6 +1444,7 @@ function shortcutsOnce(e) {
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyE") { setFiles(!FILES.open); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyP") { setPresent(!PRESENT.on); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyD") { boardToggle(); return false; }   // board.js: in and out
   if (e.ctrlKey && e.code === "Tab") {
     if (boardOn()) { boardCycle(e.shiftKey ? -1 : 1); return false; }
     const keys = tabsOf(current).map((s) => s.key);
