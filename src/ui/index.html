@@ -17,6 +17,7 @@
     <div class="brand"><span class="dot"></span>atril<span class="ext">.syn</span></div>
 
     <button id="find" class="search" title="Buscar cualquier sesión, en cualquier dispositivo">⌕ buscar sesiones… <kbd>Ctrl+Shift+K</kbd></button>
+    <button id="boardbtn" class="boardrow"></button>
 
     <div class="label">dispositivos</div>
     <ul id="devices"></ul>
@@ -36,7 +37,7 @@
   </aside>
 
   <main id="main">
-    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span><span class="lbl"> terminal</span></button><span id="vchips"></span><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
+    <nav id="tabs"><button id="expand" title="Mostrar panel (Ctrl+Shift+B)" hidden>»</button><div id="tablist"></div><button id="boardx" hidden title="Volver a los spaces: el tablero queda armado para la próxima">salir<span class="lbl"> del tablero</span></button><input id="newtitle" placeholder="título (opcional) · Enter" maxlength="80" hidden autocomplete="off" spellcheck="false"><button id="plus" title="Nueva terminal en este space (Ctrl+Shift+T)"><span>+</span><span class="lbl"> terminal</span></button><span id="vchips"></span><button id="filesbtn" title="Archivos del space: qué cambió, leer un archivo, ver el diff (Ctrl+Shift+E)">archivos</button><button id="menu" class="only-narrow" title="Sesiones">☰</button></nav>
     <section id="stage">
       <div id="empty">
         <p id="empty-title">Este space no tiene terminales.</p>
@@ -44,6 +45,8 @@
         <p class="muted small-hint">o Enter · Ctrl+Shift+T</p>
         <p class="muted">Cerrar una pestaña no termina el programa: sigue corriendo<br>y lo encontrás en <b>agents</b> o con la búsqueda.</p>
       </div>
+      <div id="board" hidden><div id="bempty"></div></div>
+      <div id="bdrop" hidden></div>
       <div id="viewer" hidden>
         <div class="vh"><span id="vpath"></span><span id="vmeta" class="muted"></span><span class="sp"></span><span id="vmode" hidden><button data-m="read">leer</button><button data-m="doc">ver</button><button data-m="file">archivo</button><button data-m="diff">diff</button></span><button id="vmin" class="vbtn" title="Volver a la terminal y dejar el archivo a mano: «archivo» arriba lo reabre donde estabas (Esc)">— minimizar</button><button id="vclose" class="vbtn" title="Cerrar el archivo">× cerrar</button></div>
         <div id="vbody" tabindex="-1"></div>
@@ -81,6 +84,8 @@
   </div>
 </div>
 
+<div id="bmenu" hidden></div>
+
 <div id="dialog" hidden>
   <div class="box"><p id="dtext"></p><div id="dbtns"></div></div>
 </div>
@@ -91,7 +96,10 @@
   <button data-a="kill" class="danger">Matar proceso</button>
   <button data-a="restart">Reiniciar</button>
   <button data-a="remove">Quitar de la lista</button>
+  <button data-a="toboard">Llevar al tablero</button>
+  <button data-a="offboard">Sacar del tablero</button>
   <button data-a="newtab" data-for="space">Nueva terminal acá</button>
+  <button data-a="sptoboard" data-for="space">Llevar al tablero</button>
   <button data-a="forget" data-for="space">Olvidar este space</button>
   <button data-a="mnew" data-for="machine">Nuevo space en esta máquina</button>
   <button data-a="alias" data-for="machine">Ponerle un nombre…</button>
@@ -175,6 +183,7 @@
 <script src="vendor/purify.min.js"></script>
 <script src="app.js"></script>
 <script src="files.js"></script>
+<script src="board.js"></script>
 <script src="present.js"></script>
 <script src="star.js"></script>
 </body>

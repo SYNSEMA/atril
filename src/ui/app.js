@@ -2,6 +2,12 @@
 // that run there. The agents list shows only agents, from every space of every machine. This window
 // only talks to the daemon of this computer: another machine is reached through it (/api/m/<id>/…),
 // over the SSH link that daemon keeps open. Closing a tab only hides it and closes its socket.
+//
+// The screen has two modes, never both at once:
+//   space mode (this file): one space selected in the sidebar, its tabs on top, one terminal.
+//   board mode (board.js): no space selected; up to four terminals of any space of any device at once.
+// Code that asks "which terminal is on screen / gets the keys" uses activeKey() and onScreen(), never
+// lastTab[current] directly: in board mode lastTab[current] is a tab that is not on screen.
 "use strict";
 
 const $ = (s) => document.querySelector(s);
@@ -31,6 +37,12 @@ const base = (mid) => (mid === LOCAL ? "/api" : `/api/m/${encodeURIComponent(mid
 const skey = (mid, id) => `${mid}/${id}`;
 const spaceId = (mid, key) => `${mid}|${key}`;
 const machineOf = (mid) => machines.find((m) => m.mid === mid);
+const loaded = new Set();     // machines whose whole list of sessions arrived (a session missing there is gone)
+
+// board.js owns BOARD; these three are all this file needs to know about it
+const boardOn = () => typeof BOARD !== "undefined" && BOARD.on;
+const activeKey = () => (boardOn() ? BOARD.focus : lastTab[current]);   // the terminal your keys go to
+const onScreen = (key) => (boardOn() ? BOARD.keys.includes(key) : key === lastTab[current]);
 
 // ---- login: `atr open` brings the key in the fragment; it becomes an HttpOnly cookie
 async function login() {
@@ -115,6 +127,7 @@ function feed(mid) {
       for (const k of [...sessions.keys()]) if (k.startsWith(mid + "/")) sessions.delete(k);
       for (const s of m.sessions) put(mid, s);
       spacesBy[mid] = m.spaces;
+      loaded.add(mid);
       if (mid === LOCAL && m.machines) setMachines(m.machines);
       if (!spaceOf(current) && mid === LOCAL) current = (spacesBy[LOCAL][0] && spaceId(LOCAL, spacesBy[LOCAL][0].key)) || null;
     } else if (m.session.status === "removed") { sessions.delete(skey(mid, m.session.id)); dropTerm(skey(mid, m.session.id)); }
@@ -131,10 +144,10 @@ function feed(mid) {
 const unseen = new Set();
 function put(mid, s) {
   const key = skey(mid, s.id), prev = sessions.get(key);
-  if (prev && prev.activity === "working" && s.activity !== "working" && s.status === "running" && (key !== lastTab[current] || document.hidden)) unseen.add(key);
+  if (prev && prev.activity === "working" && s.activity !== "working" && s.status === "running" && (!onScreen(key) || document.hidden)) unseen.add(key);
   sessions.set(key, { ...s, mid, key });
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && unseen.delete(lastTab[current])) renderSide(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && unseen.delete(activeKey())) renderSide(); });
 // the dot of a session: bell (it asks for you), working, done (finished, not seen yet), exited; an
 // agent you already saw waiting gets `idle` (a hollow ring where a list wants one, else nothing)
 function dotOf(s, idle = "none") {
@@ -176,6 +189,8 @@ const lastSpace = store.get("lastSpace", {});   // mid -> space id
 function selectMachine(mid) {
   machineSel = mid;
   store.set("machine", mid);
+  // on the board a device only says whose spaces the sidebar lists: you bring them in from there
+  if (boardOn()) { renderSide(); return; }
   const list = spacesBy[mid] || [];
   const busy = list.find((sp) => tabsOf(spaceId(mid, sp.key)).length);
   const want = spaceOf(lastSpace[mid]) ? lastSpace[mid] : (busy || list[0]) ? spaceId(mid, (busy || list[0]).key) : null;
@@ -290,6 +305,7 @@ function renderSide() {
     al.append(g);
     for (const o of out) al.append(outsideItem(m2, o));
   }
+  paintBoardBtn();   // board.js
   renderTabs();
 }
 
@@ -310,7 +326,7 @@ function spaceItem(mm, sp) {
   const sid = spaceId(mm.mid, sp.key);
   const list = inSpace(sid);
   const li = document.createElement("li");
-  li.className = sid === current ? "on" : "";
+  li.className = sid === current && !boardOn() ? "on" : "";   // on the board no space is selected
   li.title = sp.path;
   const running = list.filter((s) => s.status === "running");
   // a dot only when there is something to look at: what asks for you first, then what finished, then work going on
@@ -323,21 +339,24 @@ function spaceItem(mm, sp) {
   li.querySelector(".branch").textContent = sp.branch || "";
   li.onclick = () => { selectSpace(sid); $("#side").classList.remove("show"); };
   li.oncontextmenu = (e) => { e.preventDefault(); showSpaceMenu({ ...sp, mid: mm.mid, sid }, e.clientX, e.clientY); };
+  boardDraggable(li, { sid });   // board.js: dropped on the terminal, the space goes to the board
   return li;
 }
 
 function agentItem(s) {
   const li = document.createElement("li");
   const st = statusOf(s);
-  li.className = s.key === lastTab[current] ? "open" : "";
+  li.className = onScreen(s.key) ? "open" : "";
   li.title = tooltip(s);
   li.innerHTML = `<span class="st ${dotOf(s, "wait")}"></span><span class="name"></span><span class="meta"></span><span class="sub"></span>`;
   li.querySelector(".name").textContent = untitled(s) ? s.kind : s.name;
   li.querySelector(".meta").textContent = s.status === "exited" ? "exit " + (s.exit_code ?? "?") : ago(s.started);
   const title = s.title && s.status === "running" && !/[\\/].*\.(exe|cmd)$/i.test(s.title) ? s.title : null;
   li.querySelector(".sub").textContent = `${label(s)}${title ? " · " + title : ""}`;
-  li.onclick = () => { reveal(s.key); $("#side").classList.remove("show"); };
+  // on the board, one of its terminals is focused there; anything else goes to its space
+  li.onclick = () => { if (boardOn() && BOARD.keys.includes(s.key)) boardFocus(s.key); else reveal(s.key); $("#side").classList.remove("show"); };
   li.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.key, e.clientX, e.clientY); };
+  boardDraggable(li, { key: s.key });
   let press;
   li.ontouchstart = (e) => { press = setTimeout(() => showCtx(s.key, e.touches[0].clientX, e.touches[0].clientY), 550); };
   li.ontouchend = li.ontouchmove = () => clearTimeout(press);
@@ -346,6 +365,7 @@ function agentItem(s) {
 
 // ---- spaces and tabs
 function selectSpace(sid) {
+  leaveBoard();   // board.js: choosing a space is space mode
   current = sid;
   useSpace(sid);
   if (sid) { lastSpace[sid.split("|")[0]] = sid; store.set("lastSpace", lastSpace); }
@@ -362,6 +382,7 @@ const tabsOf = (sid) => inSpace(sid).filter((s) => !hidden.has(s.key));
 let editing = false;          // a tab title being typed: the bar must not be redrawn under it
 function renderTabs() {
   if (editing) return;
+  if (boardOn()) return renderBoard();   // board.js draws the bar and the terminals
   const bar = $("#tablist");
   bar.innerHTML = "";
   const list = tabsOf(current);
@@ -375,11 +396,13 @@ function renderTabs() {
     const x = el.querySelector(".x");
     x.textContent = "×";
     x.title = s.status === "running" ? "Cerrar pestaña (el programa sigue: está en agents / find)" : "Cerrar y olvidar";
-    el.title = tooltip(s) + "\n(doble clic para ponerle título)";
+    el.title = tooltip(s) + "\n(doble clic para ponerle título · mantené apretado para llevarla al tablero)";
     el.onclick = (e) => { if (e.target !== x && e.target.tagName !== "INPUT") focusTab(s.key); };
     x.onclick = () => closeTab(s.key);
     el.onauxclick = (e) => { if (e.button === 1) closeTab(s.key); };
     el.oncontextmenu = (e) => { e.preventDefault(); showCtx(s.key, e.clientX, e.clientY); };
+    boardDraggable(el, { key: s.key });
+    boardHold(el, s.key);   // held still, the tab comes off the bar and the board opens with it
     bar.append(el);
   });
   const sp = spaceOf(current);
@@ -394,6 +417,7 @@ function renderTabs() {
 function reveal(key) {
   const s = sessions.get(key);
   if (!s) return;
+  leaveBoard();
   hidden.delete(key);
   store.set("hidden2", [...hidden]);
   current = spaceId(s.mid, s.space);
@@ -406,6 +430,7 @@ function reveal(key) {
 function focusTab(key) {
   const s = sessions.get(key);
   if (!s) return;
+  leaveBoard();
   lastTab[spaceId(s.mid, s.space)] = key;
   store.set("lastTab2", lastTab);
   useSpace(spaceId(s.mid, s.space));
@@ -425,6 +450,8 @@ function closeTab(key) {
   if (s && s.status !== "running") api("DELETE", `${base(s.mid)}/sessions/${s.id}`).catch(() => {});   // ended: nothing to keep
   else { hidden.add(key); store.set("hidden2", [...hidden]); }
   if (lastTab[current] === key) delete lastTab[current];
+  // on the board it leaves the board too (a session that is gone would reconnect forever in its pane)
+  if (boardOn()) { if (BOARD.keys.includes(key)) boardRemove(key); else renderSide(); return; }
   const rest = tabsOf(current).filter((x) => x.key !== key);
   if (rest.length) focusTab(rest[rest.length - 1].key); else { showOnly(null); renderSide(); }
 }
@@ -439,31 +466,34 @@ function dropTerm(key) {
   terms.delete(key);
 }
 
-// a new session in the space on screen (its machine, its folder)
 // a new session: on the machine given, else on the device chosen in the sidebar; in the space on
-// screen when it is that machine's, else in the user's home folder there (which becomes a space)
-async function newTab(body = {}, onMid = null) {
+// screen when it is that machine's, else in the user's home folder there (which becomes a space).
+// It is shown in its space unless show is false (the board places it itself); gives its key
+async function newTab(body = {}, onMid = null, show = true) {
   const mid = onMid || machineSel;
   const cur = spaceOf(current);
   const sp = cur && cur.mid === mid ? cur : null;
-  const t = terms.get(lastTab[current]);
+  const t = terms.get(activeKey());
   const s = await api("POST", base(mid) + "/sessions", {
     cols: t ? t.term.cols : 120, rows: t ? t.term.rows : 32,
     cwd: sp ? sp.path : undefined, ...body,
   });
   put(mid, s);
-  reveal(skey(mid, s.id));
+  if (show) reveal(skey(mid, s.id));
+  return skey(mid, s.id);
 }
 
 // the same program again, in the same folder and with the same name
 async function restart(key) {
   const s = sessions.get(key);
   if (!s) return;
+  const at = boardOn() ? BOARD.keys.indexOf(key) : -1;   // a pane of the board: the new one takes its place
   dropTerm(key);
   await api("DELETE", `${base(s.mid)}/sessions/${s.id}`);
   sessions.delete(key);
-  current = spaceId(s.mid, s.space);
-  await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name }, s.mid);
+  if (at < 0) current = spaceId(s.mid, s.space);
+  const nk = await newTab({ cmd: s.cmd, args: s.args, cwd: s.cwd, name: s.name }, s.mid, at < 0);
+  if (at >= 0) boardReplace(key, nk, at);
 }
 
 // `atr open [session]` while this window is open: show it here
@@ -485,7 +515,7 @@ function askTitle() {
 function endAsk() { $("#newtitle").hidden = true; $("#plus").hidden = false; }
 $("#newtitle").onkeydown = (e) => {
   if (e.key === "Enter") { const name = e.target.value.trim(); endAsk(); newTab(name ? { name } : {}).catch((err) => notice(err.message)); }
-  else if (e.key === "Escape") { endAsk(); const t = terms.get(lastTab[current]); if (t) t.term.focus(); }
+  else if (e.key === "Escape") { endAsk(); const t = terms.get(activeKey()); if (t) t.term.focus(); }
 };
 $("#newtitle").onblur = endAsk;
 
@@ -674,49 +704,75 @@ function claim(t) {
   t.fit.fit();
   send(t, { t: "r", cols: t.term.cols, rows: t.term.rows });
 }
-const claimActive = () => claim(terms.get(lastTab[current]));
+const claimActive = () => claim(terms.get(activeKey()));
 window.addEventListener("focus", claimActive);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) claimActive(); });
 
-window.addEventListener("resize", () => { const t = terms.get(lastTab[current]); if (t) t.fit.fit(); });
+window.addEventListener("resize", () => { const t = terms.get(activeKey()); if (t) t.fit.fit(); });
 
-// ---- palette: any session of any space of any machine
+// ---- palette: any session of any space of any machine. On the board a pick goes to the board instead
+// of to its space, and every space of every device offers a new terminal there too
 function openPalette() {
   $("#palette").hidden = false;
   $("#q").value = "";
+  $("#q").placeholder = boardOn() ? "sumar al tablero: nombre, comando, space, dispositivo…" : "nombre, comando, pid o id…";
   paint();
   $("#q").focus();
 }
 let sel = 0;
+// entries: {s} a session, or {sp} a space where a new terminal opens (board only)
 function matches() {
   const q = $("#q").value.toLowerCase().trim();
-  return allSessions().filter((s) =>
-    !q || [s.name, s.cmd, s.title, s.cwd, s.here, String(s.pid), s.id, s.kind, (machineOf(s.mid) || {}).name].some((v) => v && String(v).toLowerCase().includes(q)));
+  const hit = (vals) => !q || vals.some((v) => v && String(v).toLowerCase().includes(q));
+  const list = allSessions().filter((s) =>
+    hit([s.name, s.cmd, s.title, s.cwd, s.here, String(s.pid), s.id, s.kind, (machineOf(s.mid) || {}).name])).map((s) => ({ s }));
+  if (boardOn()) {
+    for (const mm of machines) {
+      if (mm.status !== "up") continue;
+      for (const sp of spacesBy[mm.mid] || []) {
+        if (hit([sp.name, sp.path, sp.branch, machineName(mm)])) list.push({ sp: { ...sp, mid: mm.mid, sid: spaceId(mm.mid, sp.key) } });
+      }
+    }
+  }
+  return list;
 }
 function paint() {
   const ul = $("#results");
   ul.innerHTML = "";
   const list = matches();
   sel = Math.min(sel, Math.max(0, list.length - 1));
-  list.forEach((s, i) => {
+  list.forEach((x, i) => {
     const li = document.createElement("li");
     li.className = i === sel ? "sel" : "";
-    li.innerHTML = `<span class="st ${statusOf(s)}"></span><span></span><span class="meta"></span>`;
-    li.children[1].textContent = untitled(s) && isAgent(s) ? s.kind : s.name;
-    const sp = spaceOf(spaceId(s.mid, s.space));
-    const where = (machines.length > 1 ? ((machineOf(s.mid) || {}).name || "") + " · " : "") + (sp ? sp.name : s.cwd);
-    li.children[2].textContent = `${where} · ${isAgent(s) ? s.kind : "terminal"} · pid ${s.pid}`;
-    li.onclick = () => pick(s.key);
+    if (x.sp) {
+      li.innerHTML = `<span class="st none"></span><span></span><span class="meta"></span>`;
+      li.children[1].textContent = "+ terminal nueva en " + x.sp.name;
+      li.children[2].textContent = [machineName(machineOf(x.sp.mid)), x.sp.branch].filter(Boolean).join(" · ");
+    } else {
+      const s = x.s;
+      li.innerHTML = `<span class="st ${statusOf(s)}"></span><span></span><span class="meta"></span>`;
+      li.children[1].textContent = untitled(s) && isAgent(s) ? s.kind : s.name;
+      const sp = spaceOf(spaceId(s.mid, s.space));
+      const where = (machines.length > 1 ? ((machineOf(s.mid) || {}).name || "") + " · " : "") + (sp ? sp.name : s.cwd);
+      const on = boardOn() && BOARD.keys.includes(s.key) ? " · en el tablero" : "";
+      li.children[2].textContent = `${where} · ${isAgent(s) ? s.kind : "terminal"} · pid ${s.pid}${on}`;
+    }
+    li.onclick = () => pick(x);
     ul.append(li);
   });
 }
-function pick(key) { $("#palette").hidden = true; reveal(key); }
+function pick(x) {
+  $("#palette").hidden = true;
+  if (x.sp) boardNew(x.sp).catch((err) => notice(err.message));
+  else if (boardOn()) boardAdd(x.s.key);
+  else reveal(x.s.key);
+}
 $("#q").oninput = () => { sel = 0; paint(); };
 $("#q").onkeydown = (e) => {
   const list = matches();
   if (e.key === "ArrowDown") { sel = Math.min(sel + 1, list.length - 1); paint(); e.preventDefault(); }
   else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); paint(); e.preventDefault(); }
-  else if (e.key === "Enter" && list[sel]) pick(list[sel].key);
+  else if (e.key === "Enter" && list[sel]) pick(list[sel]);
   else if (e.key === "Escape") $("#palette").hidden = true;
 };
 $("#palette").onclick = (e) => { if (e.target.id === "palette") $("#palette").hidden = true; };
@@ -745,7 +801,7 @@ async function openPicker(mid) {
     paintPicker();
   } catch (e) { $("#pmsg").textContent = e.message; }
 }
-function closePicker() { $("#picker").hidden = true; const t = terms.get(lastTab[current]); if (t) t.term.focus(); }
+function closePicker() { $("#picker").hidden = true; const t = terms.get(activeKey()); if (t) t.term.focus(); }
 
 async function pickerGo(path) {
   try {
@@ -819,6 +875,8 @@ async function choose(path) {
   try {
     const { key } = await api("POST", base(picker.mid) + "/spaces", { path });
     $("#picker").hidden = true;
+    // on the board with room left, its first terminal goes there; else to the new space, as always
+    if (boardOn() && BOARD.keys.length < BOARD_MAX) return boardAdd(await newTab({ cwd: path }, picker.mid, false));
     current = spaceId(picker.mid, key);
     store.set("space2", current);
     await newTab({ cwd: path }, picker.mid);
@@ -1322,6 +1380,8 @@ function showCtx(key, x, y) {
   m.querySelector('[data-a="kill"]').textContent = "Terminar proceso";
   m.querySelector('[data-a="remove"]').hidden = s.status === "running";
   m.querySelector('[data-a="restart"]').hidden = s.status === "running";
+  m.querySelector('[data-a="toboard"]').hidden = boardOn() && BOARD.keys.includes(key);
+  m.querySelector('[data-a="offboard"]').hidden = !(boardOn() && BOARD.keys.includes(key));
   place(m, x, y);
 }
 function showSpaceMenu(sp, x, y) { ctxSpace = sp; only("space"); place($("#ctx"), x, y); }
@@ -1342,6 +1402,7 @@ $("#ctx").onclick = async (e) => {
   $("#ctx").hidden = true;
   try {
     if (a === "forget") return await forgetSpace(ctxSpace);
+    if (a === "sptoboard") return await boardAddSpace(ctxSpace);
     if (a === "newtab") { current = ctxSpace.sid; store.set("space2", current); renderSide(); return askTitle(); }
     if (a === "mnew") return openPicker(ctxMachine.mid);
     if (a === "alias") return openPresent(ctxMachine.mid);
@@ -1363,6 +1424,8 @@ $("#ctx").onclick = async (e) => {
     }
     if (a === "restart") await restart(ctxKey);
     if (a === "remove") closeTab(ctxKey);
+    if (a === "toboard") boardAdd(ctxKey);
+    if (a === "offboard") boardRemove(ctxKey);
   } catch (err) { notice(err.message); }
 };
 
@@ -1376,12 +1439,13 @@ function shortcuts(e) {
 function shortcutsOnce(e) {
   if (e.type !== "keydown") return true;
   if (e.ctrlKey && e.shiftKey && e.code === "KeyK") { openPalette(); return false; }
-  if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { askTitle(); return false; }
-  if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (lastTab[current]) closeTab(lastTab[current]); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyT") { if (boardOn()) boardNewHere(); else askTitle(); return false; }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyW") { if (boardOn()) { if (BOARD.focus) boardRemove(BOARD.focus); } else if (lastTab[current]) closeTab(lastTab[current]); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") { setSide($("#side").classList.contains("collapsed")); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyE") { setFiles(!FILES.open); return false; }
   if (e.ctrlKey && e.shiftKey && e.code === "KeyP") { setPresent(!PRESENT.on); return false; }
   if (e.ctrlKey && e.code === "Tab") {
+    if (boardOn()) { boardCycle(e.shiftKey ? -1 : 1); return false; }
     const keys = tabsOf(current).map((s) => s.key);
     if (keys.length) focusTab(keys[(keys.indexOf(lastTab[current]) + (e.shiftKey ? -1 : 1) + keys.length) % keys.length]);
     return false;
@@ -1394,7 +1458,7 @@ const KEYS = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B", right: "\x1
 function setCtrl(t, on) { t.ctrl = on; $('#keys [data-k="ctrl"]').classList.toggle("on", on); }
 $("#keys").onclick = (e) => {
   const k = e.target.dataset.k;
-  const t = terms.get(lastTab[current]);
+  const t = terms.get(activeKey());
   if (!k || !t) return;
   if (k === "ctrl") setCtrl(t, !t.ctrl); else send(t, { t: "i", d: KEYS[k] });
   t.term.focus();
@@ -1404,13 +1468,13 @@ function setSide(open) {
   $("#side").classList.toggle("collapsed", !open);
   $("#expand").hidden = open;
   store.set("side", open);
-  requestAnimationFrame(() => { const t = terms.get(lastTab[current]); if (t) t.fit.fit(); });
+  requestAnimationFrame(() => { const t = terms.get(activeKey()); if (t) t.fit.fit(); });
 }
 $("#collapse").onclick = () => setSide(false);
 $("#expand").onclick = () => setSide(true);
 setSide(store.get("side", true));
 
-$("#plus").onclick = askTitle;
+$("#plus").onclick = () => (boardOn() ? openPalette() : askTitle());   // on the board: add a terminal
 $("#open-term").onclick = () => newTab().catch((err) => notice(err.message));
 // with no terminal on screen, Enter or + open one (inside a terminal they are just keys)
 document.addEventListener("keydown", (e) => {
@@ -1445,6 +1509,7 @@ document.addEventListener("click", (e) => {
     if (!spacesBy[LOCAL]) return;
     clearInterval(ready);
     if (wanted) show(wanted);
+    else if (boardOn()) enterBoard();   // as you left it
     else if (spaceOf(current)) selectSpace(current);
     else if (spacesBy[LOCAL].length) selectSpace(spaceId(LOCAL, spacesBy[LOCAL][0].key));
   }, 100);

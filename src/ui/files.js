@@ -29,7 +29,7 @@ const codeClass = (c) => (c === "??" || c === "A" ? "gN" : c === "D" ? "gD" : c 
 const codeLetter = (c) => (c === "??" ? "N" : c === "A" ? "N" : c || "");
 
 // ---- the panel: open, close, width; the terminal on screen fits what is left
-function refit() { requestAnimationFrame(() => { const t = terms.get(lastTab[current]); if (t) t.fit.fit(); }); }
+function refit() { requestAnimationFrame(() => { const t = terms.get(activeKey()); if (t) t.fit.fit(); }); }
 // floating, the panel covers the right of the terminal without resizing it: a TUI that lays itself out
 // by width (OpenCode hides its sidebar when narrow) stays as it was. Docked, the terminal makes room.
 // The viewer, which lives over the terminals, keeps clear of a floating panel
@@ -249,7 +249,7 @@ async function openFile(path, mode, line = 0, sid = FILES.sid) {
   await loadView(false);
 }
 function backToTerminal() {
-  const t = terms.get(lastTab[current]);
+  const t = terms.get(activeKey());
   if (t) requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); });
 }
 function hideViewer() {

@@ -15,6 +15,7 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 - [x] Daemon that owns the pseudo-terminals (ConPTY on Windows, openpty on Linux/macOS)
 - [x] Sessions that outlive their windows, with scrollback replayed on attach
 - [x] Web UI (xterm.js): sidebar of sessions grouped as agents / terminals, tabs, search (Ctrl+Shift+K)
+- [x] The board: up to four terminals of different spaces and devices on screen at once
 - [x] Agent detection by program, state from activity and terminal bell, title from OSC
 - [x] `atr` CLI: `open`, `run`, `ls`, `kill`, `rm`, `up`, `down`
 - [x] Local-only security model (see [SECURITY.md](SECURITY.md))
@@ -83,6 +84,14 @@ atr down                       # stop the daemon and every session
 atr pair                       # a QR for your phone: it opens this machine's window from anywhere
 atr devices                    # the paired phones; `atr devices rm <id>` cuts one at once
 ```
+
+**The board (tablero)**: up to four terminals on screen at once, from different spaces and different
+devices. Hold a tab still (it comes off the bar), drag a tab, a space or an agent onto the terminal,
+or right click → **Llevar al tablero**; **▦ tablero** in the sidebar goes in and out. Two side by
+side, three with the third along the bottom, four in a square; drag a pane's bar onto another to swap
+them, and **+ agregar** adds one that runs or a new one in any space of any machine. On the board no
+space is selected; taking a terminal off (×) leaves it running as a tab of its space. On a phone the
+board shows one pane at a time, and the chips on top switch between them.
 
 **A server, in the same window**: on your computer, **+ conectar máquina** → `user@ip` (and the
 port, if it is not 22). If the server has no Atril yet, the dialog offers to install it there, with
