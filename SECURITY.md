@@ -58,7 +58,7 @@ still listens on its own 127.0.0.1, and this computer reaches it through an SSH 
 A phone on mobile data cannot reach a computer behind a home router, and the daemon still listens on
 127.0.0.1 only. So both connect **out** to a relay that joins them, and the relay is not trusted:
 everything between the phone and the daemon is encrypted end to end, with keys the relay never has.
-Where the relay runs (ours at `atril.synsema.io`, or yours) decides availability, not security.
+Where the relay runs (ours at `relay.atril.dev`, or yours) decides availability, not security.
 
 | Threat | What stops it | Verified |
 |---|---|---|
@@ -68,7 +68,7 @@ Where the relay runs (ours at `atril.synsema.io`, or yours) decides availability
 | A stolen key, later, opens what was recorded before | Every connection adds two fresh ephemeral keys (forward secrecy) | — (by construction: DH(Ep, Ed) dies with the connection) |
 | A phone you lost | `atr devices rm <id>` on the computer: its connection is cut at once and it cannot come back | revoked in the end-to-end test: the next request fails, the phone stops retrying |
 | A paired phone pairs others, removes phones, stops the daemon, reads the sources, here or on a machine this computer links | Those routes answer 403 to a phone, also written `/api//remote/…` (the router joins the slashes) and through `/api/m/<machine>/…`, where the mark of the phone goes along to that machine's daemon; pairing is done only from the computer | 403 on `/api/remote/*`, `/api/shutdown`, `/api/source/*` from the phone |
-| The page the phone runs is changed on the way | The app is served from its own origin (`app.atril.synsema.io`, static files built from this repository by `src/app/build.sh`), never by the relay: breaking into the relay does not change the code that holds the keys | — |
+| The page the phone runs is changed on the way | The app is served from its own origin (`app.atril.dev`, static files built from this repository by `src/app/build.sh`), never by the relay: breaking into the relay does not change the code that holds the keys | — |
 | Moving the phones to another relay | Only the computer chooses the relay (`/api/remote/relay` answers 403 to a phone); the phones connected at that moment learn the new address inside a sealed record, so a relay cannot send them elsewhere | moved to a local relay and back in the end-to-end test: the phone followed both times |
 
 **Pairing.** `atr pair` shows a QR with the relay, the room (derived from the daemon's public key),
@@ -87,7 +87,7 @@ match before it sends anything.
 daemon's own API on 127.0.0.1 with its key, so every check of the window applies to the phone too.
 
 **The relay** (`src/relay.syn`) keeps nothing: no file, no database, no outgoing connection. Its
-`require` block is `serve`, `time`, `random`. Ours is `atril.synsema.io`; yours runs with one command
+`require` block is `serve`, `time`, `random`. Ours is `relay.atril.dev`; yours runs with one command
 (the header of `relay.syn`, or **Agregar dispositivo → Teléfono → cambiar** in the window, which tests
 it and shows how long a message takes to come back before you use it).
 
@@ -95,7 +95,7 @@ Known gaps, in order:
 - A relay can refuse service (drop the frames); it cannot read or change them.
 - The relay accepts the first daemon that connects to a room. The room's name is only in the QR, and a
   squatter would only block it (it cannot complete a handshake). A signature from the daemon is next.
-- The first load of the web app trusts the server of `app.atril.synsema.io` and its certificate. The
+- The first load of the web app trusts the server of `app.atril.dev` and its certificate. The
   Android app (next) carries the same files inside, signed: no server is trusted for the code.
 - The daemon may open connections to any host (`require net("*")`), because the relay is yours to
   choose. Only the Remote agent connects out, and only to the relay in `~/.atril/remote.json`.

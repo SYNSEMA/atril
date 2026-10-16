@@ -578,7 +578,7 @@ task relay_show(r)
 
 task relay(rest)
     when length(rest) >= 2 and rest[0] == "use"
-        let addr be when rest[1] == "synsema" then "wss://atril.synsema.io" otherwise rest[1]
+        let addr be when rest[1] == "synsema" then "wss://relay.atril.dev" otherwise rest[1]
         relay_show(api("POST", "/api/remote/relay", {"relay": addr}))
         say("los teléfonos conectados ahora se pasan solos; uno que no estaba conectado tiene que escanear un código nuevo")
         give nothing

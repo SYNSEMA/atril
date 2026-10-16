@@ -1,6 +1,6 @@
 #!/bin/sh
 # build.sh — the phone's app: the window of src/ui as it is, plus remote.js loaded before any other
-# script (it routes /api through the relay, sealed end to end). Published at app.atril.synsema.io, an
+# script (it routes /api through the relay, sealed end to end). Published at app.atril.dev, an
 # origin of its own: the keys a phone keeps there are not shared with any other page.
 #   src/app/build.sh [out]      (default: out/app)
 set -eu

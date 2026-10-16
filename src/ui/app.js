@@ -1057,7 +1057,7 @@ async function showPlaces() {
     box.append(card(p.name, facts.join(" · "), why, p.link && p.link !== "up", () => { phone.place = p; showHow(); }));
   }
   if (r.synsema) {
-    box.append(card("Relay de Synsema", "atril.synsema.io · corre en nuestros servidores",
+    box.append(card("Relay de Synsema", "relay.atril.dev · corre en nuestros servidores",
       "Lo usás si no tenés otro dispositivo donde correrlo. Solo pasa datos cifrados entre tu teléfono y esta computadora: no puede leerlos. El teléfono llega mientras esta computadora esté prendida y con Atril abierto.",
       false, () => { phone.place = { id: "synsema", name: "Synsema" }; run("synsema"); }));
   } else {

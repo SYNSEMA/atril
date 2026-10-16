@@ -35,7 +35,7 @@ require env("HOME")
 require file.write("~/.atril/*")
 require file.read          -- a space's .git/HEAD, wherever the project lives (its shells can read it anyway)
 require net("127.0.0.1")     -- this daemon, and the tunnels to the other machines
-require net("*")   -- the relay the phones reach this daemon through: ours (atril.synsema.io) or the one you
+require net("*")   -- the relay the phones reach this daemon through: ours (relay.atril.dev) or the one you
                    -- choose, anywhere; what goes through it is sealed end to end (remote.syn)
 require reveal("ecdh_keypair.private")   -- once: this daemon's key for the phones, written to ~/.atril/remote.json
 require env("ATRIL_RELAY")   -- another relay (tests, your own)
@@ -1180,8 +1180,8 @@ task proxy_http(mid, method, rest, q, body, phone)
 
 let REMOTE_FILE be "~/.atril/remote.json"
 let DEVICES_FILE be "~/.atril/remote-devices.json"
-let RELAY_DEFAULT be "wss://atril.synsema.io"
-let APP_URL be "https://app.atril.synsema.io"
+let RELAY_DEFAULT be "wss://relay.atril.dev"
+let APP_URL be "https://app.atril.dev"
 let PAIR_TTL be 300
 
 -- this daemon's key, made the first time (the private half is revealed once, to be written here)
@@ -1194,6 +1194,9 @@ task remote_conf()
     let c be json_decode(read_file(REMOTE_FILE))
     -- "" (or null): no relay, removed on purpose; ATRIL_RELAY wins over the file
     let stored be get(c, "relay", RELAY_DEFAULT)
+    -- the relay used to answer at atril.synsema.io; a key made then still names it
+    when stored == "wss://atril.synsema.io"
+        set stored to RELAY_DEFAULT
     let forced be env("ATRIL_RELAY", "")
     let relay be when forced != "" then forced otherwise when stored == nothing or text(stored) == "" then nothing otherwise stored
     give {"public": remote.unb64(c["public"]), "relay": relay}
@@ -1308,7 +1311,7 @@ task set_relay(a)
 --
 -- The window offers the devices it knows: this computer and every machine connected through SSH, each
 -- with what was measured (how long it has been on, how its link has been), never a promise. Our relay
--- (atril.synsema.io) is offered only while there is nothing else to run one on. Atril then does the
+-- (relay.atril.dev) is offered only while there is nothing else to run one on. Atril then does the
 -- work: copies relay.syn, keeps it running (a systemd user unit on a server; this daemon on this
 -- computer), opens the tunnel or the domain, and tests it from here before using it.
 --
@@ -1642,10 +1645,10 @@ task setup_flow(sock, req)
     when mode == "synsema"
         when length(load_machines()) > 0
             give {"error": "Con otro dispositivo conectado, el relay corre en uno tuyo."}
-        tell(sock, "Probando atril.synsema.io")
+        tell(sock, "Probando relay.atril.dev")
         let pr be relay_probe(RELAY_DEFAULT)
         when not pr["ok"]
-            give {"error": "atril.synsema.io no responde: " + text(pr["error"])}
+            give {"error": "relay.atril.dev no responde: " + text(pr["error"])}
         save_setup({"place": "synsema", "name": "Synsema", "mode": "synsema"}, RELAY_DEFAULT)
         give {"ok": true, "relay": RELAY_DEFAULT, "ms": pr["ms"]}
     when not mode in ["ip", "domain", "tunnel"]
