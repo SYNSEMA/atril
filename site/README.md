@@ -17,16 +17,16 @@ A release is published from the Atril repository with `.\release.ps1 -Title "…
 ## Publish
 
 `.github/workflows/site.yml` publishes this folder to GitHub Pages on every push to `main` that
-touches `site/`: <https://synsema.github.io/atril/>. The 404 page uses absolute paths under `/atril/`
-(GitHub serves it at any missing path).
+touches `site/`: <https://atril.dev/>. The 404 page uses absolute paths from `/` (GitHub serves it
+at any missing path).
 
-## Own domain (later)
+## Domain
 
-1. Add a `CNAME` file here with the domain (for example `atril.dev`).
-2. Change `https://synsema.github.io/atril/` to the domain in `robots.txt`, `sitemap.xml` and the
-   `<head>` of `index.html` (canonical, `og:*`, `twitter:*`, JSON-LD), and `/atril/` to `/` in `404.html`.
-3. Settings → Pages → Custom domain, and at the DNS: `A` records to 185.199.108.153,
-   185.199.109.153, 185.199.110.153 and 185.199.111.153.
+`atril.dev` is set in Settings → Pages → Custom domain (with a workflow there is no `CNAME` file).
+Its DNS is at Cloudflare, "DNS only" (grey cloud), so GitHub issues and renews the certificate:
+`A` records for `atril.dev` to 185.199.108.153, 185.199.109.153, 185.199.110.153 and 185.199.111.153,
+and `CNAME` `www` to `synsema.github.io`. The old address, `synsema.github.io/atril/`, redirects
+here, so the install commands already out there keep working.
 
 ## Files
 
@@ -34,8 +34,8 @@ touches `site/`: <https://synsema.github.io/atril/>. The 404 page uses absolute 
 index.html        the page (SEO in <head>: description, canonical, Open Graph, JSON-LD)
 style.css         the look: green phosphor screen, white chips, classic Mac windows
 site.js           the live data from GitHub, and the copy button
-install.ps1       Windows from the terminal: irm https://synsema.github.io/atril/install.ps1 | iex
-install.sh        Linux and macOS: curl -fsSL https://synsema.github.io/atril/install.sh | sh
+install.ps1       Windows from the terminal: irm https://atril.dev/install.ps1 | iex
+install.sh        Linux and macOS: curl -fsSL https://atril.dev/install.sh | sh
 404.html          a page that is not there
 og.png            the card when the link is shared (1200×630)
 favicon.svg, favicon-32.png, apple-touch-icon.png

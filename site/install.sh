@@ -1,14 +1,14 @@
 #!/bin/sh
 # Atril for Linux and macOS (a server, a VPS, your laptop), from the terminal, for this user (no root):
 #
-#   curl -fsSL https://synsema.github.io/atril/install.sh | sh
+#   curl -fsSL https://atril.dev/install.sh | sh
 #
 # It installs the Synsema engine when it is missing, downloads the source of the newest release and
 # runs its src/install.sh: atr + atrild built into ~/.local/bin and, on Linux with systemd, a user
 # service that keeps the daemon (and your sessions) up, also after you log out of a server.
 # Source: https://github.com/SYNSEMA/atril
 #
-#   curl -fsSL https://synsema.github.io/atril/install.sh | sh -s -- --uninstall    removes it
+#   curl -fsSL https://atril.dev/install.sh | sh -s -- --uninstall    removes it
 
 # everything in one function, called on the last line: a download cut halfway runs nothing
 atril_install() {

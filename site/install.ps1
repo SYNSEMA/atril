@@ -1,6 +1,6 @@
 # Atril for Windows, from the terminal: the newest release, installed for this user (no admin).
 #
-#   irm https://synsema.github.io/atril/install.ps1 | iex
+#   irm https://atril.dev/install.ps1 | iex
 #
 # Downloaded by PowerShell, the files carry no "came from the internet" mark, so Windows does not
 # stop them with SmartScreen warnings. It checks the .zip against the SHA-256 that GitHub publishes

@@ -1,5 +1,5 @@
 # release.ps1 - publishes a version of Atril on GitHub: the Windows .zip as a release asset. The site
-# (synsema.github.io/atril) reads the newest release by itself: its number, date and title, the download link and
+# (atril.dev) reads the newest release by itself: its number, date and title, the download link and
 # the downloads of every release.
 #
 #   .\release.ps1 -Title "Panel de archivos, diffs y temas de dia y de noche"

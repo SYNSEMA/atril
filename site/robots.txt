@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://synsema.github.io/atril/sitemap.xml
+Sitemap: https://atril.dev/sitemap.xml

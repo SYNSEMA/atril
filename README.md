@@ -33,7 +33,7 @@ Built with [Synsema](https://synsema.dev): the daemon, the CLI and the server ar
 PowerShell downloads carry no "from the internet" mark):
 
 ```powershell
-irm https://synsema.github.io/atril/install.ps1 | iex
+irm https://atril.dev/install.ps1 | iex
 ```
 
 Or download `atril-<version>-windows-x64.zip` from [Releases](https://github.com/SYNSEMA/atril/releases),
@@ -53,12 +53,12 @@ starts the daemon when you sign in. No admin.
 
 To publish a version: `.\release.ps1 -Title "…"` builds, zips `dist\` with the installer
 (`atril-<version>-windows-x64.zip`, with **Instalar Atril.cmd** inside) and creates the GitHub release
-`v<version>`; the site, [its site](https://synsema.github.io/atril/), shows it by itself. `-DryRun` only builds the zip.
+`v<version>`; the site, [its site](https://atril.dev/), shows it by itself. `-DryRun` only builds the zip.
 
 **Linux / macOS / a server or VPS**, the newest release, for this user (no root):
 
 ```sh
-curl -fsSL https://synsema.github.io/atril/install.sh | sh
+curl -fsSL https://atril.dev/install.sh | sh
 ```
 
 It installs the Synsema engine if missing and builds atr + atrild into `~/.local/bin`; on Linux a

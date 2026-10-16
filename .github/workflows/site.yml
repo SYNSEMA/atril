@@ -1,4 +1,4 @@
-# Publishes site/ (Atril's web page) to GitHub Pages: https://synsema.github.io/atril/
+# Publishes site/ (Atril's web page) to GitHub Pages: https://atril.dev/
 # On every push to main that touches site/, and by hand from the Actions tab.
 name: site
 
